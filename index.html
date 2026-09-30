@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="DeckVault">
+  <title>DeckVault</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><div class="brand-mark">DV</div><div><div class="brand-name">DeckVault</div><div class="brand-sub">Card Collection Scanner</div></div></div>
+  <button id="installBtn" class="ghost hidden">Install</button>
+</header>
+
+<main class="shell">
+  <section id="dashboard" class="view active">
+    <div class="hero">
+      <div class="eyebrow">COLLECTION VALUE</div>
+      <div id="collectionValue" class="big">$0.00</div>
+      <div class="muted">USD total from stored market prices</div>
+    </div>
+    <div class="stats">
+      <div><span>Total cards</span><strong id="totalCards">0</strong></div>
+      <div><span>Unique entries</span><strong id="uniqueCards">0</strong></div>
+      <div><span>Duplicates</span><strong id="duplicates">0</strong></div>
+      <div><span>Sets</span><strong id="setCount">0</strong></div>
+    </div>
+    <h2>Quick actions</h2>
+    <div class="actions">
+      <button data-go="scanner">◎<span>Scan cards<small>Use phone camera</small></span></button>
+      <button data-go="lookup">⌕<span>Find a card<small>Pokémon database</small></span></button>
+      <button data-go="library">▦<span>Library<small>Browse collection</small></span></button>
+      <button data-go="settings">⇩<span>Backup<small>Export your data</small></span></button>
+    </div>
+    <h2>Recently added</h2>
+    <div id="recent" class="panel empty">No cards yet.</div>
+  </section>
+
+  <section id="lookup" class="view">
+    <div class="pagehead"><div><div class="eyebrow">CARD DATABASE</div><h1>Find a card</h1></div></div>
+    <div class="panel form">
+      <label>Card game
+        <select id="gameSelect"><option value="pokemon">Pokémon TCG</option></select>
+      </label>
+      <label>Card name<input id="searchName" placeholder="e.g. Charizard ex"></label>
+      <label>Collector number <span class="muted">optional</span><input id="searchNumber" placeholder="e.g. 199"></label>
+      <button id="searchBtn" class="primary">Search</button>
+    </div>
+    <div id="searchStatus" class="status"></div>
+    <div id="results" class="results"></div>
+  </section>
+
+  <section id="scanner" class="view">
+    <div class="pagehead"><div><div class="eyebrow">RAPID SCAN</div><h1>Phone camera</h1></div><span id="cameraStatus" class="pill">Camera off</span></div>
+    <div class="scanner">
+      <video id="video" autoplay playsinline muted></video>
+      <img id="capturePreview" class="hidden" alt="Captured card">
+      <canvas id="canvas" class="hidden"></canvas>
+      <div id="cameraPlaceholder" class="placeholder"><div class="frame"></div><p>Position one card inside the frame.</p></div>
+    </div>
+    <div class="scanbuttons">
+      <button id="startCamera" class="primary">Start camera</button>
+      <button id="captureCard" class="secondary" disabled>Capture</button>
+      <button id="retake" class="secondary hidden">Retake</button>
+    </div>
+    <div class="notice"><strong>v0.1:</strong> camera capture works. Automatic OCR/image matching is the next scanner milestone.</div>
+    <button class="wide secondary" data-go="lookup">Identify captured card with lookup</button>
+  </section>
+
+  <section id="library" class="view">
+    <div class="pagehead"><div><div class="eyebrow">YOUR CARDS</div><h1>Collection</h1></div><button id="refreshPrices" class="ghost">Refresh prices</button></div>
+    <div class="toolbar"><input id="librarySearch" placeholder="Search name, set, number…"><select id="librarySort"><option value="recent">Recently added</option><option value="name">Name A–Z</option><option value="set">Set</option><option value="value">Highest value</option><option value="quantity">Highest quantity</option></select></div>
+    <div id="libraryList" class="library"></div>
+  </section>
+
+  <section id="settings" class="view">
+    <div class="pagehead"><div><div class="eyebrow">DATA & SETTINGS</div><h1>Settings</h1></div></div>
+    <div class="panel form">
+      <h3>Valuation</h3>
+      <label>Pokémon price source
+        <select id="priceSource">
+          <option value="tcgplayer-market">TCGplayer Market</option>
+          <option value="tcgplayer-mid">TCGplayer Mid</option>
+          <option value="cardmarket-30">Cardmarket 30-day average</option>
+          <option value="cardmarket-7">Cardmarket 7-day average</option>
+        </select>
+      </label>
+    </div>
+    <div class="panel">
+      <h3>Backup & portability</h3>
+      <p>Your collection stays in this browser's local IndexedDB.</p>
+      <div class="stack">
+        <button id="exportJson" class="secondary">Download master backup (.json)</button>
+        <button id="exportCsv" class="secondary">Download collection (.csv)</button>
+        <button id="exportCollectr" class="secondary">Download Collectr transfer CSV</button>
+        <label class="filebtn">Restore master backup<input id="importJson" type="file" accept=".json,application/json"></label>
+      </div>
+    </div>
+    <div class="panel danger">
+      <h3>Local data</h3>
+      <button id="clearData" class="dangerbtn">Clear local collection</button>
+    </div>
+    <div class="panel"><strong>DeckVault v0.1</strong><p class="muted">Pokémon is the first supported provider. The collection model is built to add more card games later.</p></div>
+  </section>
+</main>
+
+<nav class="bottomnav">
+  <button data-go="dashboard" class="active">⌂<small>Home</small></button>
+  <button data-go="lookup">⌕<small>Lookup</small></button>
+  <button data-go="scanner" class="scan">◎<small>Scan</small></button>
+  <button data-go="library">▦<small>Library</small></button>
+  <button data-go="settings">⚙<small>Settings</small></button>
+</nav>
+
+<dialog id="cardDialog"><form method="dialog"><button class="close" value="cancel">×</button><div id="dialogBody"></div></form></dialog>
+<div id="toast" class="toast"></div>
+<script src="app.js" defer></script>
+</body>
+</html>
