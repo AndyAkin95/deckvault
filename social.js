@@ -131,6 +131,80 @@ async function searchSocialUniversal(q){
 }
 window.searchSocialUniversal=searchSocialUniversal;
 
+
+async function favoriteState(type,referenceId){
+  if(!currentUser)return null;
+  const {data,error}=await sb.from('user_favorites').select('*')
+    .eq('user_id',currentUser.id).eq('favorite_type',type).eq('reference_id',String(referenceId)).maybeSingle();
+  if(error){console.error(error);return null;}
+  return data||null;
+}
+async function saveFavorite(type,referenceId,label,imageUrl='',metadata={}){
+  const existing=await favoriteState(type,referenceId);
+  if(existing){
+    const {error}=await sb.from('user_favorites').delete().eq('user_id',currentUser.id).eq('favorite_type',type).eq('reference_id',String(referenceId));
+    if(error)return toast('Could not remove favorite');
+    toast('Removed from favorites');return false;
+  }
+  const {error}=await sb.from('user_favorites').insert({
+    user_id:currentUser.id,favorite_type:type,reference_id:String(referenceId),label,image_url:imageUrl||null,metadata
+  });
+  if(error)return toast('Could not save favorite');
+  haptic?.(16);toast('Saved to favorites');return true;
+}
+async function loadSavedItems(){
+  if(!currentUser||!$('#savedWatchlist'))return;
+  const [{data:watch,error:wErr},{data:favs,error:fErr}]=await Promise.all([
+    sb.from('card_watchlist').select('*').eq('user_id',currentUser.id).order('created_at',{ascending:false}),
+    sb.from('user_favorites').select('*').eq('user_id',currentUser.id).order('created_at',{ascending:false})
+  ]);
+  const wb=$('#savedWatchlist'),fb=$('#savedFavorites');wb.innerHTML='';fb.innerHTML='';
+  if(wErr){wb.innerHTML='<div class="empty">Could not load watchlist.</div>';}
+  else if(!watch?.length)wb.innerHTML='<div class="empty compact">No watched cards yet.</div>';
+  else (watch||[]).forEach(w=>{
+    const e=document.createElement('div');e.className='saveditem';
+    e.innerHTML=(w.image_url?'<img src="'+esc(imageUrl(w.image_url))+'" alt="">':'<div class="savedicon">★</div>')+
+      '<div><strong>'+esc(w.card_name)+'</strong><span>'+esc(w.set_name||'')+' • '+esc(w.variant||'Normal')+'</span><small>'+(w.target_price!=null?'Target '+money(w.target_price,w.currency||'USD')+' • ':'')+'Alert at '+Number(w.notify_change_pct||10)+'% change</small></div>'+
+      '<div><button class="secondary" data-open type="button">Open</button><button class="ghost" data-remove type="button">Remove</button></div>';
+    e.querySelector('[data-open]').onclick=()=>{const card=items.find(x=>x.cardId===w.card_id&&x.variant===w.variant);if(card){go('library');openLibraryCardDetails(card);}else toast('Card is not currently in your library');};
+    e.querySelector('[data-remove]').onclick=async()=>{await sb.from('card_watchlist').delete().eq('user_id',currentUser.id).eq('game',w.game).eq('card_id',w.card_id).eq('variant',w.variant);loadSavedItems();renderDashboard();};
+    wb.appendChild(e);
+  });
+  if(fErr){fb.innerHTML='<div class="empty">Could not load favorites.</div>';}
+  else if(!favs?.length)fb.innerHTML='<div class="empty compact">No favorite sets or listings yet.</div>';
+  else (favs||[]).forEach(f=>{
+    const e=document.createElement('div');e.className='saveditem';
+    e.innerHTML=(f.image_url?'<img src="'+esc(imageUrl(f.image_url))+'" alt="">':'<div class="savedicon">'+(f.favorite_type==='set'?'▦':'⇄')+'</div>')+
+      '<div><strong>'+esc(f.label)+'</strong><span>'+esc(f.favorite_type==='set'?'Pokémon set':'Marketplace listing')+'</span></div>'+
+      '<div><button class="secondary" data-open type="button">Open</button><button class="ghost" data-remove type="button">Remove</button></div>';
+    e.querySelector('[data-remove]').onclick=async()=>{await sb.from('user_favorites').delete().eq('user_id',currentUser.id).eq('favorite_type',f.favorite_type).eq('reference_id',f.reference_id);loadSavedItems();};
+    e.querySelector('[data-open]').onclick=async()=>{
+      if(f.favorite_type==='marketplace_listing'&&f.metadata?.card_id){
+        go('marketplace');findTradeOffers({id:f.metadata.card_id,name:f.metadata.card_name||f.label,setName:f.metadata.set_name||'',localId:f.metadata.local_id||'',image:f.image_url||'',sellerCount:0});
+      }else if(f.favorite_type==='set'){
+        go('community');switchCommunityTab('profiles');await viewProfile(currentUser.id);
+        const sets=await allMasterSets(),set=sets.find(x=>x.id===f.reference_id);
+        if(set){const owned=await masterOwnedMap(currentUser.id);openMasterSet(currentUser.id,set,owned);}
+      }
+    };
+    fb.appendChild(e);
+  });
+}
+async function sendAdminNotice(){
+  if(!isAdmin)return;
+  const target=$('#adminNoticeTarget').value.trim(),title=$('#adminNoticeTitle').value.trim(),body=$('#adminNoticeBody').value.trim();
+  if(!title||!body)return toast('Add a title and message');
+  let q=sb.from('profiles').select('id,username');
+  if(target)q=q.eq('username',target);
+  const {data:profiles,error}=await q;
+  if(error)return toast('Could not find recipients');
+  if(!profiles?.length)return toast('No matching recipient');
+  const rows=profiles.map(p=>({user_id:p.id,type:'admin_notice',title,body,actor_user_id:currentUser.id,reference_type:'admin_notice'}));
+  const {error:insertErr}=await sb.from('notifications').insert(rows);
+  if(insertErr)return toast('Could not send notification');
+  $('#adminNoticeTitle').value='';$('#adminNoticeBody').value='';toast('Notification sent to '+profiles.length+' account'+(profiles.length===1?'':'s'));
+}
+
 function marketplaceLabel(mode){
   return ({off:'Not trading',trade:'Trade only',sell:'Sell / cash only',both:'Trade + Sell'})[mode]||'Not trading';
 }
@@ -542,10 +616,11 @@ async function findTradeOffers(card){
     else dealText='<div class="offerprice tradeonly">Trade + Sell</div>';
     const actions=o.user_id===currentUser.id
       ?'<button type="button" class="secondary" data-view>View my profile</button>'
-      :'<button type="button" class="primary" data-message>Message '+esc(o.username||'collector')+'</button><button type="button" class="secondary" data-view>View profile</button><button type="button" class="ghost" data-report>Report listing</button>';
+      :'<button type="button" class="primary" data-message>Message '+esc(o.username||'collector')+'</button><button type="button" class="secondary" data-favorite>☆ Save listing</button><button type="button" class="secondary" data-view>View profile</button><button type="button" class="ghost" data-report>Report listing</button>';
     e.innerHTML='<div class="offeruser">'+(o.avatar_url?'<img src="'+esc(o.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+'<div><strong>'+esc(who)+'</strong><span class="marketbadge '+esc(o.marketplace_mode)+'">'+esc(marketplaceLabel(o.marketplace_mode))+'</span></div>'+dealText+'</div><div class="offerbody"><strong>'+esc(o.card_name)+'</strong><span>'+esc(o.set_name)+' • #'+esc(o.local_id)+'</span><span>'+esc(o.variant)+' • '+esc(o.condition)+' • '+esc(o.language)+'</span><span>Available quantity: '+Number(o.offer_quantity||1)+'</span>'+(o.offer_note?'<p>'+esc(o.offer_note)+'</p>':'')+(o.marketplace_note?'<p class="marketnote">'+esc(o.marketplace_note)+'</p>':'')+'<div class="offeractions">'+actions+'</div></div>';
     e.querySelector('[data-view]').onclick=()=>{go('community');switchCommunityTab('profiles');viewProfile(o.user_id);};
     const msg=e.querySelector('[data-message]');if(msg)msg.onclick=()=>{go('community');startPrivateConversation(o.user_id,{type:'marketplace_listing',id:o.collection_item_id,label:o.card_name+' — '+o.set_name+' #'+o.local_id});};
+    const fav=e.querySelector('[data-favorite]');if(fav)fav.onclick=async()=>{const on=await saveFavorite('marketplace_listing',o.collection_item_id,o.card_name+' — @'+(o.username||'collector'),o.image_url||'',{card_id:card.id,card_name:o.card_name,set_name:o.set_name,local_id:o.local_id,seller_id:o.user_id});fav.textContent=on?'★ Saved':'☆ Save listing';};
     const rep=e.querySelector('[data-report]');if(rep)rep.onclick=()=>openReport({type:'marketplace_listing',id:o.collection_item_id,userId:o.user_id,label:'Report '+o.card_name+' listing by @'+(o.username||'collector'),category:'fraud'});
     box.appendChild(e);
   });
@@ -797,6 +872,7 @@ const SETTINGS_HINTS={
   marketplace:'Trade / Sell availability and the permanent marketplace list.',
   lists:'Create and manage your custom public or private lists.',
   valuation:'Choose which supported market value DeckVault displays by default.',
+  favorites:'Watched cards, favorite Pokémon sets, and saved marketplace listings.',
   backup:'Export, transfer, or restore your collection data.',
   diagnostics:'Review DeckVault runtime errors and export troubleshooting data.',
   data:'Collection deletion and app information.',
@@ -810,6 +886,7 @@ function switchSettingsSection(section){
   select.value=section;
   document.querySelectorAll('[data-settings-pane]').forEach(p=>p.classList.toggle('active',p.dataset.settingsPane===section));
   $('#settingsSectionHint').textContent=SETTINGS_HINTS[section]||'';
+  if(section==='favorites')loadSavedItems();
   if(section==='admin'&&isAdmin)Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit(),loadReports()]);
 }
 
@@ -946,8 +1023,10 @@ async function openMasterSet(userId,setBrief,ownedMap){
   const host=$('#profileMasterSets');if(!host)return;
   const set=await masterSetDetail(setBrief.id),mine=userId===currentUser.id;
   const owned=ownedMap.get(set.id)||new Set();
-  host.innerHTML='<div class="mastersethead"><button id="masterSetBack" class="ghost" type="button">← All sets</button><div><div class="eyebrow">MASTER SET</div><h3>'+esc(set.name)+'</h3><span id="masterSetProgressText">'+owned.size+' / '+Number(set.cardCount?.total||set.cards?.length||0)+' owned</span></div></div><div id="masterSetCardGrid" class="mastercardgrid"></div>';
+  host.innerHTML='<div class="mastersethead"><button id="masterSetBack" class="ghost" type="button">← All sets</button><div><div class="eyebrow">MASTER SET</div><h3>'+esc(set.name)+'</h3><span id="masterSetProgressText">'+owned.size+' / '+Number(set.cardCount?.total||set.cards?.length||0)+' owned</span></div><button id="masterSetFavorite" class="secondary" type="button">☆ Favorite set</button></div><div id="masterSetCardGrid" class="mastercardgrid"></div>';
   $('#masterSetBack').onclick=()=>renderMasterSetHub(userId);
+  const fav=await favoriteState('set',set.id);$('#masterSetFavorite').textContent=fav?'★ Favorited':'☆ Favorite set';
+  $('#masterSetFavorite').onclick=async()=>{const on=await saveFavorite('set',set.id,set.name,set.logo||'',{set_id:set.id});$('#masterSetFavorite').textContent=on?'★ Favorited':'☆ Favorite set';};
   const grid=$('#masterSetCardGrid');
   (set.cards||[]).forEach(card=>{
     const isOwned=owned.has(card.id);
@@ -1205,6 +1284,8 @@ document.addEventListener('DOMContentLoaded',()=>{
   $('#submitReportBtn').onclick=submitReport;
   $('#refreshBlocksBtn').onclick=loadBlockedUsersSettings;
   $('#refreshReports').onclick=loadReports;
+  $('#refreshSavedItemsBtn').onclick=loadSavedItems;
+  $('#sendAdminNoticeBtn').onclick=sendAdminNotice;
   $('#newForumThreadBtn').onclick=()=>{$('#newForumThreadDialog').showModal();};
   $('#createForumThreadBtn').onclick=createForumThread;
   $('#backToForumsBtn').onclick=()=>{$('#forumThreadView').classList.add('hidden');$('#forumListView').classList.remove('hidden');loadForumThreads();};
