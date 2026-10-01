@@ -1,4 +1,4 @@
-const CACHE='deckvault-v17-static';
+const CACHE='deckvault-v18-static';
 const CORE=['./','./index.html','./styles.css','./app.js','./social.js','./manifest.json','./icon.svg','https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js'];
 
 self.addEventListener('install',event=>{
