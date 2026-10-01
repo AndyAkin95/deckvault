@@ -294,7 +294,7 @@ function setOfflineMode(enabled,savedAt=null){
     $('#offlineSavedAt').textContent=offlineMode&&savedAt?'Last synced '+new Date(savedAt).toLocaleString():'';
   }
   ['lookup','scanner','marketplace','community'].forEach(view=>{
-    $('[data-go="'+view+'"]').forEach(b=>b.disabled=offlineMode);
+    $$('[data-go="'+view+'"]').forEach(b=>b.disabled=offlineMode);
   });
   if($('#accountChip')&&currentUser)$('#accountChip').textContent=(currentUser.email||'Signed in')+(offlineMode?' • Offline':'');
 }
@@ -588,7 +588,7 @@ async function signUp(e){e.preventDefault();showPane('applicationPane');setAuthM
 async function resetPassword(e){e.preventDefault();setAuthMessage('Sending recovery email…');const {error}=await sb.auth.resetPasswordForEmail($('#resetEmail').value.trim(),{redirectTo:location.origin+location.pathname});if(error)return setAuthMessage(error.message,true);setAuthMessage('Recovery email sent.');}
 async function signOut(){await sb.auth.signOut();items=[];hideAccessGates();showAuth();}
 
-function go(view){if(view!=='scanner'&&activeScanRunning)stopActiveScan(false);$('.view').forEach(v=>v.classList.toggle('active',v.id===view));$('.bottomnav button').forEach(b=>b.classList.toggle('active',b.dataset.go===view));window.scrollTo({top:0,behavior:'smooth'});if(view==='dashboard')renderDashboard();if(view==='library')renderLibrary();}
+function go(view){if(view!=='scanner'&&activeScanRunning)stopActiveScan(false);$$('.view').forEach(v=>v.classList.toggle('active',v.id===view));$$('.bottomnav button').forEach(b=>b.classList.toggle('active',b.dataset.go===view));window.scrollTo({top:0,behavior:'smooth'});if(view==='dashboard')renderDashboard();if(view==='library')renderLibrary();}
 async function pokemonSearch(name,number){const p=new URLSearchParams();if(name)p.set('name',name.trim());if(number)p.set('localId',number.trim());const r=await fetch(API+'/cards?'+p);if(!r.ok)throw new Error('TCGdex search failed ('+r.status+')');return r.json();}
 async function pokemonCard(id){const r=await fetch(API+'/cards/'+encodeURIComponent(id));if(!r.ok)throw new Error('Could not load card');return r.json();}
 async function pokemonSets(){if(pokemonSetCache)return pokemonSetCache;const r=await fetch(API+'/sets');if(!r.ok)throw new Error('Could not load Pokémon sets');pokemonSetCache=await r.json();return pokemonSetCache;}
@@ -755,9 +755,9 @@ async function loadPriceHistory(x){
     renderHistoryChart(rows.filter(r=>r.provider===p&&r.metric===m),activeHistoryRange);
   };
   selector.onchange=draw;
-  $$('.historyrange').forEach(b=>b.onclick=()=>{
+  $$$('.historyrange').forEach(b=>b.onclick=()=>{
     activeHistoryRange=b.dataset.range;
-    $$('.historyrange').forEach(x=>x.classList.toggle('active',x===b));
+    $$$('.historyrange').forEach(x=>x.classList.toggle('active',x===b));
     draw();
   });
   draw();
@@ -1044,7 +1044,7 @@ async function init(){
   $('#refreshErrorLog').onclick=()=>loadErrorBacklog().catch(e=>console.error(e));
   $('#copyDiagnostics').onclick=copyDiagnostics;
   $('#exportDiagnostics').onclick=exportDiagnostics;
-  $('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
+  $$('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
   $('#signInForm').onsubmit=signIn;$('#signUpForm').onsubmit=signUp;$('#resetForm').onsubmit=resetPassword;
   $('#staySignedIn').checked=localStorage.getItem(STAY_SIGNED_IN_KEY)==='true';
   $('#staySignedIn').onchange=e=>localStorage.setItem(STAY_SIGNED_IN_KEY,e.target.checked?'true':'false');
