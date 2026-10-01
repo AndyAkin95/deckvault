@@ -21,6 +21,8 @@ const PROFILE_FIELDS=[
 let currentProfile=null;
 let isAdmin=false;
 let tradeListId=null;
+let mfaEnrollmentFactorId=null;
+let pendingAdminAction=null;
 
 function marketplaceLabel(mode){
   return ({off:'Not trading',trade:'Trade only',sell:'Sell / cash only',both:'Trade + Sell'})[mode]||'Not trading';
@@ -37,6 +39,7 @@ async function submitApplication(e){
   const {data,error}=await sb.functions.invoke('submit-account-application',{
     body:{email:$('#applicationEmail').value.trim(),username:$('#applicationUsername').value.trim()}
   });
+window.refreshSocialState=refreshSocialState;
   if(error)return setAuthMessage(error.message||'Could not submit application.',true);
   if(data?.error)return setAuthMessage(data.error,true);
   if(data?.status==='pending') return setAuthMessage('Your application is already pending review.');
@@ -357,11 +360,173 @@ async function findTradeOffers(card){
   $('#marketOfferHeading').scrollIntoView({behavior:'smooth',block:'start'});
 }
 
+
+async function checkAdminMfa(){
+  if(!isAdmin)return false;
+  const {data,error}=await sb.auth.mfa.listFactors();
+  if(error){$('#adminMfaStatus').textContent='Could not check MFA';return false;}
+  const verified=(data.totp||[]).find(f=>f.status==='verified');
+  $('#adminMfaStatus').textContent=verified?'Enabled — fresh code required for every admin action':'Not configured';
+  $('#setupAdminMfaBtn').textContent=verified?'Authenticator MFA enabled':'Set up 6-digit authenticator';
+  $('#setupAdminMfaBtn').disabled=!!verified;
+  return !!verified;
+}
+
+async function startAdminMfaEnrollment(){
+  if(!isAdmin)return;
+  const factors=await sb.auth.mfa.listFactors();
+  if(factors.error)return toast('Could not start MFA setup');
+  const verified=(factors.data.totp||[]).find(f=>f.status==='verified');
+  if(verified){toast('Authenticator MFA is already enabled');return;}
+  for(const factor of (factors.data.totp||[]).filter(f=>f.status!=='verified')){
+    try{await sb.auth.mfa.unenroll({factorId:factor.id});}catch(e){}
+  }
+  const {data,error}=await sb.auth.mfa.enroll({factorType:'totp',friendlyName:'DeckVault Admin'});
+  if(error)return toast(error.message||'Could not enroll MFA');
+  mfaEnrollmentFactorId=data.id;
+  const qr=data.totp?.qr_code||'';
+  const src=qr.trim().startsWith('<svg')?'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(qr):qr;
+  $('#mfaQrWrap').innerHTML=src?'<img src="'+esc(src)+'" alt="Authenticator QR code">':'';
+  $('#mfaSecret').textContent=data.totp?.secret?'Manual key: '+data.totp.secret:'';
+  $('#mfaEnrollCode').value='';
+  $('#mfaEnrollMessage').textContent='';
+  $('#mfaEnrollDialog').showModal();
+}
+
+async function verifyAdminMfaEnrollment(){
+  const code=$('#mfaEnrollCode').value.trim();
+  if(!/^\d{6}$/.test(code)){const m=$('#mfaEnrollMessage');m.textContent='Enter the 6-digit code from your authenticator app.';m.classList.add('error');return;}
+  const m=$('#mfaEnrollMessage');m.textContent='Verifying…';m.classList.remove('error');
+  const ch=await sb.auth.mfa.challenge({factorId:mfaEnrollmentFactorId});
+  if(ch.error){m.textContent=ch.error.message;m.classList.add('error');return;}
+  const v=await sb.auth.mfa.verify({factorId:mfaEnrollmentFactorId,challengeId:ch.data.id,code});
+  if(v.error){m.textContent=v.error.message;m.classList.add('error');return;}
+  await sb.auth.refreshSession();
+  $('#mfaEnrollDialog').close();
+  await checkAdminMfa();
+  toast('Administrator MFA enabled');
+}
+
+async function verifyFreshAdminTotp(code){
+  const factors=await sb.auth.mfa.listFactors();
+  if(factors.error)throw factors.error;
+  const factor=(factors.data.totp||[]).find(f=>f.status==='verified');
+  if(!factor)throw new Error('Set up administrator authenticator MFA first.');
+  const challenge=await sb.auth.mfa.challenge({factorId:factor.id});
+  if(challenge.error)throw challenge.error;
+  const verify=await sb.auth.mfa.verify({factorId:factor.id,challengeId:challenge.data.id,code});
+  if(verify.error)throw verify.error;
+  const refreshed=await sb.auth.refreshSession();
+  if(refreshed.error)throw refreshed.error;
+}
+
+async function openAdminAction(type,payload){
+  if(!await checkAdminMfa()){await startAdminMfaEnrollment();return;}
+  pendingAdminAction={type,...payload};
+  const titleMap={approve:'Approve account?',deny:'Deny account?',ban:'Ban user?',unban:'Unban user?'};
+  const textMap={
+    approve:'Are you sure you want to approve '+(payload.label||'this account')+'? An account invitation/setup email will be sent.',
+    deny:'Are you sure you want to deny '+(payload.label||'this application')+'?',
+    ban:'Are you sure you want to ban '+(payload.label||'this user')+'? Their account and records will remain preserved for review.',
+    unban:'Are you sure you want to restore access for '+(payload.label||'this user')+'?'
+  };
+  $('#adminActionTitle').textContent=titleMap[type]||'Are you sure?';
+  $('#adminActionText').textContent=textMap[type]||'Confirm this administrator action.';
+  $('#adminActionReason').value='';
+  $('#adminActionNotes').value='';
+  $('#adminActionCode').value='';
+  $('#adminActionMessage').textContent='';
+  $('#adminActionMessage').classList.remove('error');
+  $('#adminActionReasonWrap').classList.toggle('hidden',type==='approve');
+  $('#adminActionNotesWrap').classList.toggle('hidden',type!=='ban');
+  $('#confirmAdminActionBtn').textContent=type==='approve'?'Approve':type==='deny'?'Deny':type==='ban'?'Ban user':'Unban user';
+  $('#confirmAdminActionBtn').className=type==='approve'?'primary':'dangerbtn';
+  $('#adminActionDialog').showModal();
+}
+
+async function executeAdminAction(){
+  if(!pendingAdminAction)return;
+  const code=$('#adminActionCode').value.trim();
+  const reason=$('#adminActionReason').value.trim();
+  const notes=$('#adminActionNotes').value.trim();
+  const msg=$('#adminActionMessage');
+  msg.classList.remove('error');
+  if(!/^\d{6}$/.test(code)){msg.textContent='Enter your current 6-digit authenticator code.';msg.classList.add('error');return;}
+  if(pendingAdminAction.type==='ban'&&!reason){msg.textContent='A ban reason is required.';msg.classList.add('error');return;}
+  $('#confirmAdminActionBtn').disabled=true;
+  msg.textContent='Verifying code…';
+  try{
+    await verifyFreshAdminTotp(code);
+    msg.textContent='Applying action…';
+    let result;
+    if(['approve','deny'].includes(pendingAdminAction.type)){
+      result=await sb.functions.invoke('review-account-application',{
+        body:{application_id:pendingAdminAction.applicationId,action:pendingAdminAction.type,reason:reason||null}
+      });
+    }else{
+      result=await sb.functions.invoke('moderate-user',{
+        body:{
+          target_user_id:pendingAdminAction.userId,
+          action:pendingAdminAction.type,
+          reason:reason||null,
+          admin_notes:notes||null
+        }
+      });
+    }
+    if(result.error||result.data?.error)throw new Error(result.data?.error||result.error?.message||'Admin action failed');
+    $('#adminActionDialog').close();
+    toast(pendingAdminAction.type==='approve'?'Account approved':pendingAdminAction.type==='deny'?'Application denied':pendingAdminAction.type==='ban'?'User banned':'User unbanned');
+    pendingAdminAction=null;
+    await Promise.all([loadApplications(),loadUserManagement(),loadAdminAudit()]);
+  }catch(e){
+    msg.textContent=e.message||'Admin action failed';
+    msg.classList.add('error');
+  }finally{$('#confirmAdminActionBtn').disabled=false;}
+}
+
+async function loadUserManagement(){
+  if(!isAdmin)return;
+  const [{data:profiles,error},{data:bans}]=await Promise.all([
+    sb.from('profiles').select('id,username,display_name,avatar_url,created_at').order('created_at',{ascending:true}),
+    sb.from('user_bans').select('user_id,active,reason,banned_at,unbanned_at')
+  ]);
+  const box=$('#userManagement');box.innerHTML='';
+  if(error){box.innerHTML='<div class="empty">Could not load users.</div>';return;}
+  const banMap=Object.fromEntries((bans||[]).map(b=>[b.user_id,b]));
+  const rows=(profiles||[]).filter(p=>p.id!==currentUser.id);
+  if(!rows.length){box.innerHTML='<div class="empty">No other approved users yet.</div>';return;}
+  rows.forEach(p=>{
+    const ban=banMap[p.id];
+    const e=document.createElement('div');e.className='applicationrow';
+    e.innerHTML='<div class="useridentity">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+'<div><strong>@'+esc(p.username||'unconfigured')+'</strong><small>'+esc(p.display_name||'')+'</small>'+(ban?.active?'<small class="banlabel">BANNED — '+esc(ban.reason)+'</small>':'<small>Active</small>')+'</div></div><div><button class="'+(ban?.active?'secondary':'dangerbtn')+'" data-moderate>'+(ban?.active?'Unban':'Ban')+'</button></div>';
+    e.querySelector('[data-moderate]').onclick=()=>openAdminAction(ban?.active?'unban':'ban',{userId:p.id,label:'@'+(p.username||'user')});
+    box.appendChild(e);
+  });
+}
+
+async function loadAdminAudit(){
+  if(!isAdmin)return;
+  const [{data:actions,error},{data:profiles}]=await Promise.all([
+    sb.from('admin_actions').select('id,action_type,target_user_id,reason,created_at').order('created_at',{ascending:false}).limit(20),
+    sb.from('profiles').select('id,username')
+  ]);
+  const box=$('#adminAuditLog');box.innerHTML='';
+  if(error){box.innerHTML='<div class="empty">Could not load audit log.</div>';return;}
+  if(!actions?.length){box.innerHTML='<div class="empty">No admin actions recorded yet.</div>';return;}
+  const names=Object.fromEntries((profiles||[]).map(p=>[p.id,p.username]));
+  actions.forEach(a=>{
+    const e=document.createElement('div');e.className='auditrow';
+    const target=a.target_user_id?(names[a.target_user_id]?'@'+names[a.target_user_id]:a.target_user_id.slice(0,8)):'application';
+    e.innerHTML='<strong>'+esc(a.action_type.replaceAll('_',' '))+'</strong><span>'+esc(target)+'</span><small>'+new Date(a.created_at).toLocaleString()+(a.reason?' • '+esc(a.reason):'')+'</small>';
+    box.appendChild(e);
+  });
+}
+
 async function checkAdmin(){
   const {data}=await sb.from('admin_users').select('user_id').eq('user_id',currentUser.id).maybeSingle();
   isAdmin=!!data;
   $('#adminPanel').classList.toggle('hidden',!isAdmin);
-  if(isAdmin)await loadApplications();
+  if(isAdmin)await Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit()]);
 }
 
 async function loadApplications(){
@@ -372,18 +537,12 @@ async function loadApplications(){
   if(!data?.length){box.innerHTML='<div class="empty">No pending applications.</div>';return;}
   data.forEach(a=>{
     const e=document.createElement('div');e.className='applicationrow';
+    const label='@'+a.requested_username+' ('+a.email+')';
     e.innerHTML='<div><strong>@'+esc(a.requested_username)+'</strong><small>'+esc(a.email)+'</small><small>'+new Date(a.created_at).toLocaleString()+'</small></div><div><button class="primary" data-approve>Approve</button><button class="dangerbtn" data-deny>Deny</button></div>';
-    e.querySelector('[data-approve]').onclick=()=>reviewApplication(a.id,'approve');
-    e.querySelector('[data-deny]').onclick=()=>reviewApplication(a.id,'deny');
+    e.querySelector('[data-approve]').onclick=()=>openAdminAction('approve',{applicationId:a.id,label});
+    e.querySelector('[data-deny]').onclick=()=>openAdminAction('deny',{applicationId:a.id,label});
     box.appendChild(e);
   });
-}
-
-async function reviewApplication(id,action){
-  const {data,error}=await sb.functions.invoke('review-account-application',{body:{application_id:id,action}});
-  if(error||data?.error)return toast(data?.error||error?.message||'Review failed');
-  toast(action==='approve'?'Approved — invitation sent':'Application denied');
-  await loadApplications();
 }
 
 document.addEventListener('DOMContentLoaded',()=>{
@@ -403,8 +562,12 @@ document.addEventListener('DOMContentLoaded',()=>{
   $('#marketSearchNumber').onkeydown=e=>{if(e.key==='Enter')marketCardSearch();};
   $('#communitySearch').onkeydown=e=>{if(e.key==='Enter')searchCommunity();};
   $('#refreshApplications').onclick=loadApplications;
+  $('#refreshUsers').onclick=()=>Promise.all([loadUserManagement(),loadAdminAudit()]);
+  $('#setupAdminMfaBtn').onclick=startAdminMfaEnrollment;
+  $('#verifyMfaEnrollBtn').onclick=verifyAdminMfaEnrollment;
+  $('#confirmAdminActionBtn').onclick=executeAdminAction;
   document.querySelectorAll('[data-go="community"]').forEach(b=>b.addEventListener('click',searchCommunity));
-  document.querySelectorAll('[data-go="settings"]').forEach(b=>b.addEventListener('click',()=>{loadProfileSettings();loadMyLists();loadTradeList();if(isAdmin)loadApplications();}));
+  document.querySelectorAll('[data-go="settings"]').forEach(b=>b.addEventListener('click',()=>{loadProfileSettings();loadMyLists();loadTradeList();if(isAdmin)Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit()]);}));
   sb.auth.onAuthStateChange((event,session)=>{
     if(event==='SIGNED_OUT'){$('#onboardingGate').classList.add('hidden');return;}
     if(session?.user)setTimeout(refreshSocialState,50);
