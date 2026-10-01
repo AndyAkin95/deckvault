@@ -225,8 +225,9 @@ async function loadMyLists(){
   const {data,error}=await sb.from('collection_lists').select('*').eq('user_id',currentUser.id).order('created_at',{ascending:false});
   const box=$('#myLists');box.innerHTML='';
   if(error){box.innerHTML='<div class="empty">Could not load lists.</div>';return;}
-  if(!data?.length){box.innerHTML='<div class="empty">No lists yet.</div>';return;}
-  data.filter(l=>!l.system_key).forEach(l=>{
+  const customLists=(data||[]).filter(l=>!l.system_key);
+  if(!customLists.length){box.innerHTML='<div class="empty">No custom lists yet.</div>';return;}
+  customLists.forEach(l=>{
     const e=document.createElement('div');e.className='listmanager';
     e.innerHTML='<div class="listmanagerhead"><div><strong>'+esc(l.name)+'</strong><small>'+esc(l.description||'')+'</small></div><select data-vis><option value="private">Private</option><option value="public">Public</option></select></div><div class="listadd"><select data-card><option value="">Add a card…</option>'+items.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name+' — '+x.setName+' #'+x.localId)+'</option>').join('')+'</select><button class="secondary" data-add>Add</button><button class="dangerbtn" data-delete>Delete list</button></div>';
     e.querySelector('[data-vis]').value=l.visibility;
