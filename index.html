@@ -10,7 +10,7 @@
   <title>DeckVault</title>
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=8">
+  <link rel="stylesheet" href="styles.css?v=9">
 </head>
 <body>
 <section id="authGate" class="authgate">
@@ -23,6 +23,10 @@
       <form id="signInForm" class="form authform">
         <label>Email<input id="signInEmail" type="email" autocomplete="email" required placeholder="you@example.com"></label>
         <label>Password<input id="signInPassword" type="password" autocomplete="current-password" required minlength="6" placeholder="••••••••"></label>
+        <label class="staylogin">
+          <input id="staySignedIn" type="checkbox">
+          <span><strong>Stay signed in</strong><small>Keep me logged in on this device</small></span>
+        </label>
         <button class="primary" type="submit">Sign in</button>
       </form>
       <button id="showSignUp" class="linkbtn" type="button">Apply for access</button>
@@ -358,7 +362,7 @@
 </dialog>
 <div id="toast" class="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js"></script>
-<script src="app.js?v=8" defer></script>
-<script src="social.js?v=8" defer></script>
+<script src="app.js?v=9" defer></script>
+<script src="social.js?v=9" defer></script>
 </body>
 </html>
