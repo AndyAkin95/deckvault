@@ -656,9 +656,10 @@ async function loadCommunityChat(){
     const p=profiles[m.user_id]||{};
     const mine=m.user_id===currentUser.id;
     const e=document.createElement('div');e.className='chatmessage'+(mine?' mine':'');
-    e.innerHTML='<div class="chatavatar">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+'</div><div class="chatbubble"><div class="chatmeta"><strong>'+(mine?'You':'@'+esc(p.username||'collector'))+'</strong><span>'+new Date(m.created_at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})+'</span></div><p>'+esc(m.body)+'</p>'+(mine||isAdmin?'<button class="chatdelete" type="button" title="Delete message">×</button>':'')+'</div>';
+    e.innerHTML='<div class="chatavatar">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+'</div><div class="chatbubble"><div class="chatmeta"><strong>'+(mine?'You':'@'+esc(p.username||'collector'))+'</strong><span>'+new Date(m.created_at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})+'</span></div><p>'+esc(m.body)+'</p>'+(mine||isAdmin?'<button class="chatdelete" type="button" title="Delete message">×</button>':'')+(!mine?'<button class="messagereport" type="button">Report</button>':'')+'</div>';
     const del=e.querySelector('.chatdelete');
     if(del)del.onclick=async()=>{const {error}=await sb.from('community_messages').delete().eq('id',m.id);if(error)return toast('Could not delete message');loadCommunityChat();};
+    const report=e.querySelector('.messagereport');if(report)report.onclick=()=>openReport({type:'community_message',id:m.id,userId:m.user_id,label:'Report community message from @'+(p.username||'collector'),category:'harassment'});
     box.appendChild(e);
   });
   box.scrollTop=box.scrollHeight;
@@ -945,9 +946,10 @@ async function openForumThread(threadId){
   (posts||[]).forEach(post=>{
     const p=profiles[post.user_id]||{},mine=post.user_id===currentUser.id;
     const e=document.createElement('article');e.className='forumpost';
-    e.innerHTML='<div class="forumpostuser">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+'<div><strong>'+(mine?'You':'@'+esc(p.username||'collector'))+'</strong><small>'+new Date(post.created_at).toLocaleString()+'</small></div></div><p>'+esc(post.body)+'</p>'+(mine||isAdmin?'<button class="dangerbtn forumdelete" type="button">Delete</button>':'');
+    e.innerHTML='<div class="forumpostuser">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+'<div><strong>'+(mine?'You':'@'+esc(p.username||'collector'))+'</strong><small>'+new Date(post.created_at).toLocaleString()+'</small></div></div><p>'+esc(post.body)+'</p><div class="forumpostactions">'+(mine||isAdmin?'<button class="dangerbtn forumdelete" type="button">Delete</button>':'')+(!mine?'<button class="ghost forumreport" type="button">Report</button>':'')+'</div>';
     const del=e.querySelector('.forumdelete');
     if(del)del.onclick=async()=>{if(!confirm('Delete this reply?'))return;const {error}=await sb.from('forum_posts').delete().eq('id',post.id);if(error)return toast('Could not delete reply');openForumThread(threadId);};
+    const report=e.querySelector('.forumreport');if(report)report.onclick=()=>openReport({type:'forum_post',id:post.id,userId:post.user_id,label:'Report forum reply by @'+(p.username||'collector'),category:'harassment'});
     box.appendChild(e);
   });
   $('#forumReplyForm').classList.toggle('hidden',thread.locked);
