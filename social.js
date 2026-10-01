@@ -24,7 +24,8 @@ let tradeListId=null;
 let marketplaceFeedRows=[];
 let mfaEnrollmentFactorId=null;
 let pendingAdminAction=null;
-let communityChannel=null, activeForumThreadId=null;
+let communityChannel=null, privateMessageChannel=null, activeForumThreadId=null;
+let activePrivateConversationId=null,activePrivateOtherUserId=null;
 let masterSetListCache=null,masterSetDetailCache=new Map();
 
 function marketplaceLabel(mode){
@@ -88,6 +89,8 @@ async function refreshSocialState(){
   await loadProfileSettings();
   await loadMyLists();
   await loadTradeList();
+  startPrivateMessageRealtime();
+  loadPrivateInbox().catch(console.error);
 }
 
 async function finishOnboarding(e){
@@ -206,10 +209,11 @@ async function viewProfile(userId){
   const box=$('#publicProfileView');box.classList.remove('hidden');
   const d=(details||[]).filter(x=>userId===currentUser.id||x.visibility==='public');
   const marketBadge=p.marketplace_mode&&p.marketplace_mode!=='off'?'<span class="marketbadge '+esc(p.marketplace_mode)+'">'+esc(marketplaceLabel(p.marketplace_mode))+'</span>':'';
-  box.innerHTML='<div class="profilehero">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'">':'<div class="avatarfallback large">DV</div>')+'<div><div class="eyebrow">COLLECTOR PROFILE</div><h2>@'+esc(p.username||'collector')+'</h2>'+marketBadge+'<strong>'+esc(p.display_name||'')+'</strong><p>'+esc(p.bio||'')+'</p>'+(p.marketplace_mode!=='off'&&p.marketplace_note?'<p class="marketnote">'+esc(p.marketplace_note)+'</p>':'')+'</div></div>'+
+  box.innerHTML='<div class="profilehero">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'">':'<div class="avatarfallback large">DV</div>')+'<div><div class="eyebrow">COLLECTOR PROFILE</div><h2>@'+esc(p.username||'collector')+'</h2>'+marketBadge+'<strong>'+esc(p.display_name||'')+'</strong><p>'+esc(p.bio||'')+'</p>'+(p.marketplace_mode!=='off'&&p.marketplace_note?'<p class="marketnote">'+esc(p.marketplace_note)+'</p>':'')+(userId!==currentUser.id?'<button class="primary profilemessagebtn" type="button" data-message-user="'+esc(userId)+'">Message collector</button>':'')+'</div></div>'+
     '<div class="publicdetails">'+d.map(x=>'<div><span>'+esc(PROFILE_FIELDS.find(f=>f[0]===x.field_key)?.[1]||x.field_key)+'</span><strong>'+esc(x.field_value)+'</strong></div>').join('')+'</div>'+
     '<div class="profilemaster"><div class="pagehead"><div><div class="eyebrow">POKÉMON CHECKLIST</div><h3>Master Sets</h3></div></div><div id="profileMasterSets"></div></div>'+
     '<h3>Public lists</h3><div id="profileLists" class="liststack"></div><div id="profileListContents"></div>';
+  const messageBtn=box.querySelector('[data-message-user]');if(messageBtn)messageBtn.onclick=()=>startPrivateConversation(userId);
   const lb=$('#profileLists');
   const visible=(lists||[]).filter(l=>userId===currentUser.id||l.visibility==='public');
   if(!visible.length)lb.innerHTML='<div class="empty">This collector has no public lists.</div>';
@@ -444,11 +448,13 @@ async function profileMapFor(userIds){
   return Object.fromEntries((data||[]).map(p=>[p.id,p]));
 }
 function switchCommunityTab(tab){
-  $$('[data-community-tab]').forEach(b=>b.classList.toggle('active',b.dataset.communityTab===tab));
+  $('[data-community-tab]').forEach(b=>b.classList.toggle('active',b.dataset.communityTab===tab));
   $('#communityChatPane').classList.toggle('active',tab==='chat');
+  $('#communityMessagesPane').classList.toggle('active',tab==='messages');
   $('#communityForumsPane').classList.toggle('active',tab==='forums');
   $('#communityProfilesPane').classList.toggle('active',tab==='profiles');
   if(tab==='chat')loadCommunityChat();
+  if(tab==='messages'){loadPrivateInbox();startPrivateMessageRealtime();}
   if(tab==='forums')loadForumThreads();
   if(tab==='profiles')searchCommunity();
 }
@@ -486,6 +492,229 @@ function startCommunityRealtime(){
     .on('postgres_changes',{event:'INSERT',schema:'public',table:'community_messages'},()=>loadCommunityChat())
     .on('postgres_changes',{event:'DELETE',schema:'public',table:'community_messages'},()=>loadCommunityChat())
     .subscribe();
+}
+
+function updatePrivateMessageBadge(count){
+  const badge=$('#privateMessageBadge');if(!badge)return;
+  const n=Math.max(0,Number(count||0));
+  badge.textContent=n>99?'99+':String(n);
+  badge.classList.toggle('hidden',n===0);
+}
+
+async function loadPrivateInbox(){
+  if(!currentUser||!$('#privateConversationList'))return;
+  const box=$('#privateConversationList');
+  const {data:conversations,error}=await sb.from('private_conversations')
+    .select('id,user_one,user_two,created_at')
+    .or('user_one.eq.'+currentUser.id+',user_two.eq.'+currentUser.id)
+    .order('created_at',{ascending:false});
+  if(error){console.error(error);box.innerHTML='<div class="empty">Could not load private messages.</div>';return;}
+
+  const rows=conversations||[];
+  if(!rows.length){
+    box.innerHTML='<div class="empty">No private conversations yet.</div>';
+    updatePrivateMessageBadge(0);
+    return;
+  }
+
+  const conversationIds=rows.map(x=>x.id);
+  const otherIds=[...new Set(rows.map(x=>x.user_one===currentUser.id?x.user_two:x.user_one))];
+  const [{data:messages,error:messageError},{data:reads},profiles]=await Promise.all([
+    sb.from('private_messages').select('id,conversation_id,sender_id,body,created_at')
+      .in('conversation_id',conversationIds).order('created_at',{ascending:false}).limit(300),
+    sb.from('private_conversation_reads').select('conversation_id,last_read_at')
+      .eq('user_id',currentUser.id).in('conversation_id',conversationIds),
+    profileMapFor(otherIds)
+  ]);
+  if(messageError)console.error(messageError);
+
+  const latest={};
+  const unread={};
+  const readMap=Object.fromEntries((reads||[]).map(r=>[r.conversation_id,new Date(r.last_read_at).getTime()]));
+  (messages||[]).forEach(m=>{
+    if(!latest[m.conversation_id])latest[m.conversation_id]=m;
+    if(m.sender_id!==currentUser.id&&new Date(m.created_at).getTime()>(readMap[m.conversation_id]||0)){
+      unread[m.conversation_id]=(unread[m.conversation_id]||0)+1;
+    }
+  });
+
+  rows.sort((a,b)=>{
+    const ad=new Date(latest[a.id]?.created_at||a.created_at).getTime();
+    const bd=new Date(latest[b.id]?.created_at||b.created_at).getTime();
+    return bd-ad;
+  });
+
+  box.innerHTML='';
+  let totalUnread=0;
+  rows.forEach(c=>{
+    const otherId=c.user_one===currentUser.id?c.user_two:c.user_one;
+    const p=profiles[otherId]||{};
+    const last=latest[c.id];
+    const unreadCount=unread[c.id]||0;totalUnread+=unreadCount;
+    const b=document.createElement('button');
+    b.type='button';
+    b.className='conversationrow'+(c.id===activePrivateConversationId?' active':'');
+    b.innerHTML=(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+
+      '<div class="conversationrowmain"><div><strong>@'+esc(p.username||'collector')+'</strong>'+
+      (unreadCount?'<span class="unreadcount">'+unreadCount+'</span>':'')+'</div>'+
+      '<p>'+esc(last?.body||'Start the conversation')+'</p>'+
+      '<small>'+(last?new Date(last.created_at).toLocaleString():new Date(c.created_at).toLocaleDateString())+'</small></div>';
+    b.onclick=()=>openPrivateConversation(c.id,otherId);
+    box.appendChild(b);
+  });
+  updatePrivateMessageBadge(totalUnread);
+}
+
+async function markPrivateConversationRead(conversationId){
+  if(!currentUser||!conversationId)return;
+  const {error}=await sb.from('private_conversation_reads').upsert({
+    conversation_id:conversationId,user_id:currentUser.id,last_read_at:new Date().toISOString()
+  },{onConflict:'conversation_id,user_id'});
+  if(error)console.error(error);
+}
+
+async function openPrivateConversation(conversationId,otherUserId){
+  if(!currentUser)return;
+  activePrivateConversationId=conversationId;
+  activePrivateOtherUserId=otherUserId;
+  const [{data:messages,error},profiles]=await Promise.all([
+    sb.from('private_messages').select('id,conversation_id,sender_id,body,created_at')
+      .eq('conversation_id',conversationId).order('created_at',{ascending:true}).limit(250),
+    profileMapFor([otherUserId])
+  ]);
+  if(error){console.error(error);return toast('Could not open private conversation');}
+  const p=profiles[otherUserId]||{};
+  $('#privateConversationEmpty').classList.add('hidden');
+  $('#privateConversationView').classList.remove('hidden');
+  $('#privateConversationHeader').innerHTML=(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+
+    '<div><div class="eyebrow">PRIVATE MESSAGE</div><strong>@'+esc(p.username||'collector')+'</strong><span>'+esc(p.display_name||'')+'</span></div>';
+  const box=$('#privateMessageThread');box.innerHTML='';
+  if(!messages?.length)box.innerHTML='<div class="empty">No messages yet. Say hello.</div>';
+  else messages.forEach(m=>{
+    const mine=m.sender_id===currentUser.id;
+    const e=document.createElement('div');e.className='privatemessage'+(mine?' mine':'');
+    e.innerHTML='<div class="privatebubble"><p>'+esc(m.body)+'</p><small>'+new Date(m.created_at).toLocaleString()+'</small></div>';
+    box.appendChild(e);
+  });
+  box.scrollTop=box.scrollHeight;
+  await markPrivateConversationRead(conversationId);
+  await loadPrivateInbox();
+}
+
+async function sendPrivateMessage(e){
+  e.preventDefault();
+  if(!activePrivateConversationId)return toast('Choose a conversation first');
+  const input=$('#privateMessageInput'),body=input.value.trim();
+  if(!body)return;
+  const {error}=await sb.from('private_messages').insert({
+    conversation_id:activePrivateConversationId,
+    sender_id:currentUser.id,
+    body
+  });
+  if(error){console.error(error);return toast('Could not send private message');}
+  input.value='';
+  await openPrivateConversation(activePrivateConversationId,activePrivateOtherUserId);
+}
+
+async function findPrivateMessageRecipients(){
+  if(!currentUser)return;
+  const q=$('#privateMessageSearch').value.trim();
+  const box=$('#privateMessageSearchResults');box.innerHTML='';
+  if(q.length<2){box.innerHTML='<div class="empty compact">Type at least 2 characters.</div>';return;}
+  const safe=q.replace(/[%_]/g,'');
+  const {data,error}=await sb.from('profiles')
+    .select('id,username,display_name,avatar_url')
+    .neq('id',currentUser.id)
+    .ilike('username','%'+safe+'%')
+    .limit(8);
+  if(error){console.error(error);box.innerHTML='<div class="empty compact">Could not search collectors.</div>';return;}
+  if(!data?.length){box.innerHTML='<div class="empty compact">No collectors found.</div>';return;}
+  data.forEach(p=>{
+    const b=document.createElement('button');b.type='button';b.className='recipientrow';
+    b.innerHTML=(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+
+      '<div><strong>@'+esc(p.username||'collector')+'</strong><span>'+esc(p.display_name||'')+'</span></div><b>Message</b>';
+    b.onclick=()=>startPrivateConversation(p.id);
+    box.appendChild(b);
+  });
+}
+
+async function getOrCreatePrivateConversation(otherUserId){
+  if(!currentUser||!otherUserId||otherUserId===currentUser.id)return null;
+  const pair=[currentUser.id,otherUserId].sort();
+  let existing=await sb.from('private_conversations').select('id,user_one,user_two')
+    .eq('user_one',pair[0]).eq('user_two',pair[1]).maybeSingle();
+  if(existing.error)throw existing.error;
+  if(existing.data)return existing.data;
+  const created=await sb.from('private_conversations').insert({user_one:pair[0],user_two:pair[1]}).select().single();
+  if(!created.error)return created.data;
+  if(created.error.code==='23505'){
+    existing=await sb.from('private_conversations').select('id,user_one,user_two')
+      .eq('user_one',pair[0]).eq('user_two',pair[1]).maybeSingle();
+    if(existing.data)return existing.data;
+  }
+  throw created.error;
+}
+
+async function startPrivateConversation(otherUserId){
+  try{
+    const c=await getOrCreatePrivateConversation(otherUserId);
+    if(!c)return;
+    switchCommunityTab('messages');
+    $('#privateMessageSearchResults').innerHTML='';
+    $('#privateMessageSearch').value='';
+    await openPrivateConversation(c.id,otherUserId);
+  }catch(e){
+    console.error(e);toast('Could not start private conversation');
+  }
+}
+
+function startPrivateMessageRealtime(){
+  if(privateMessageChannel||!currentUser)return;
+  privateMessageChannel=sb.channel('deckvault-private-messages-'+currentUser.id)
+    .on('postgres_changes',{event:'INSERT',schema:'public',table:'private_messages'},payload=>{
+      const row=payload.new||{};
+      if(row.conversation_id===activePrivateConversationId&&activePrivateOtherUserId){
+        openPrivateConversation(activePrivateConversationId,activePrivateOtherUserId).catch(console.error);
+      }else{
+        loadPrivateInbox().catch(console.error);
+      }
+    })
+    .subscribe();
+}
+
+const SETTINGS_HINTS={
+  account:'Account access, legal information, and sign out.',
+  profile:'Your public collector profile and field-level privacy.',
+  marketplace:'Trade / Sell availability and the permanent marketplace list.',
+  lists:'Create and manage your custom public or private lists.',
+  valuation:'Choose which supported market value DeckVault displays by default.',
+  backup:'Export, transfer, or restore your collection data.',
+  diagnostics:'Review DeckVault runtime errors and export troubleshooting data.',
+  data:'Collection deletion and app information.',
+  admin:'Account approvals, moderation, MFA, and administrator audit history.'
+};
+
+function switchSettingsSection(section){
+  const select=$('#settingsSectionSelect');if(!select)return;
+  const allowed=[...select.options].map(o=>o.value);
+  if(!allowed.includes(section))section='account';
+  select.value=section;
+  $('[data-settings-pane]').forEach(p=>p.classList.toggle('active',p.dataset.settingsPane===section));
+  $('#settingsSectionHint').textContent=SETTINGS_HINTS[section]||'';
+  if(section==='admin'&&isAdmin)Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit()]);
+}
+
+function syncAdminSettingsOption(){
+  const select=$('#settingsSectionSelect');if(!select)return;
+  let option=select.querySelector('option[value="admin"]');
+  if(isAdmin&&!option){
+    option=document.createElement('option');option.value='admin';option.textContent='Administrator';
+    select.appendChild(option);
+  }else if(!isAdmin&&option){
+    const wasSelected=select.value==='admin';option.remove();
+    if(wasSelected)switchSettingsSection('account');
+  }
+  $('#adminPanel').classList.toggle('admin-available',isAdmin);
 }
 async function loadForumThreads(){
   if(!currentUser||!$('#forumThreads'))return;
@@ -549,6 +778,8 @@ async function sendForumReply(e){
 function openCommunity(){
   switchCommunityTab('chat');
   startCommunityRealtime();
+  startPrivateMessageRealtime();
+  loadPrivateInbox().catch(console.error);
 }
 
 
@@ -794,7 +1025,7 @@ async function loadAdminAudit(){
 async function checkAdmin(){
   const {data}=await sb.from('admin_users').select('user_id').eq('user_id',currentUser.id).maybeSingle();
   isAdmin=!!data;
-  $('#adminPanel').classList.toggle('hidden',!isAdmin);
+  syncAdminSettingsOption();
   if(isAdmin)await Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit()]);
 }
 
@@ -829,6 +1060,11 @@ document.addEventListener('DOMContentLoaded',()=>{
   $$('[data-community-tab]').forEach(b=>b.onclick=()=>switchCommunityTab(b.dataset.communityTab));
   $('#communityChatForm').onsubmit=sendCommunityMessage;
   $('#refreshChatBtn').onclick=loadCommunityChat;
+  $('#privateMessageForm').onsubmit=sendPrivateMessage;
+  $('#refreshPrivateMessages').onclick=loadPrivateInbox;
+  $('#privateMessageSearchBtn').onclick=findPrivateMessageRecipients;
+  $('#privateMessageSearch').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();findPrivateMessageRecipients();}};
+  $('#settingsSectionSelect').onchange=e=>switchSettingsSection(e.target.value);
   $('#newForumThreadBtn').onclick=()=>{$('#newForumThreadDialog').showModal();};
   $('#createForumThreadBtn').onclick=createForumThread;
   $('#backToForumsBtn').onclick=()=>{$('#forumThreadView').classList.add('hidden');$('#forumListView').classList.remove('hidden');loadForumThreads();};
@@ -851,7 +1087,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   $('#confirmAdminActionBtn').onclick=executeAdminAction;
   document.querySelectorAll('[data-go="community"]').forEach(b=>b.addEventListener('click',openCommunity));
   document.querySelectorAll('[data-go="marketplace"]').forEach(b=>b.addEventListener('click',loadMarketplaceFeed));
-  document.querySelectorAll('[data-go="settings"]').forEach(b=>b.addEventListener('click',()=>{loadProfileSettings();loadMyLists();loadTradeList();if(isAdmin)Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit()]);}));
+  document.querySelectorAll('[data-go="settings"]').forEach(b=>b.addEventListener('click',()=>{switchSettingsSection($('#settingsSectionSelect').value||'account');loadProfileSettings();loadMyLists();loadTradeList();if(isAdmin&&$('#settingsSectionSelect').value==='admin')Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit()]);}));
   // Authentication lifecycle is owned by app.js. Community realtime starts on demand.
 });
 window.refreshSocialState=refreshSocialState;
