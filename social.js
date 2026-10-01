@@ -2,7 +2,7 @@
 
 // Bootstrap mode stays false until the owner's account is created and promoted to admin.
 // After that, it is flipped to true so new visitors apply instead of self-registering.
-const APPLICATION_MODE=false;
+const APPLICATION_MODE=true;
 
 const PROFILE_FIELDS=[
   ['birthday','Birthday','date'],
@@ -265,7 +265,7 @@ async function reviewApplication(id,action){
 }
 
 document.addEventListener('DOMContentLoaded',()=>{
-  // Current open signup is temporary only for the owner/admin bootstrap.
+  // DeckVault account creation is approval-only.
   $('#showSignUp').onclick=()=>authPane(APPLICATION_MODE?'applicationPane':'signupPane');
   $('#applicationBack').onclick=()=>authPane('signinPane');
   $('#applicationForm').onsubmit=submitApplication;
