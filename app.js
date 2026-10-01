@@ -1043,7 +1043,7 @@ window.addEventListener('unhandledrejection',e=>{
 });
 async function init(){
   // Dialog close/cancel controls must never be blocked by required-field validation.
-  $('dialog .close, dialog button[value="cancel"]').forEach(button=>{
+  $$('dialog .close, dialog button[value="cancel"]').forEach(button=>{
     button.type='button';
     button.onclick=()=>button.closest('dialog')?.close('cancel');
   });
