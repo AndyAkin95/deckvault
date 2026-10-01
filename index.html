@@ -10,7 +10,7 @@
   <title>DeckVault</title>
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=10">
+  <link rel="stylesheet" href="styles.css?v=11">
 </head>
 <body>
 <section id="authGate" class="authgate">
@@ -177,6 +177,16 @@
   <section id="marketplace" class="view">
     <div class="pagehead"><div><div class="eyebrow">MARKETPLACE</div><h1>Trade / Sell</h1></div><button id="refreshMarketplace" class="ghost" type="button">Refresh</button></div>
 
+    <div class="panel form markettopsearch">
+      <div class="pagehead"><div><div class="eyebrow">FIND A CARD</div><h2>Search marketplace</h2></div></div>
+      <label>Card game<select id="marketGame"><option value="pokemon">Pokémon TCG</option></select></label>
+      <label>Card name<input id="marketSearchName" placeholder="e.g. Umbreon ex"></label>
+      <label>Collector number <span class="muted">optional</span><input id="marketSearchNumber" placeholder="e.g. 161"></label>
+      <button id="marketSearchBtn" class="primary" type="button">Search card</button>
+      <div id="marketSearchStatus" class="status"></div>
+      <div id="marketCardResults" class="results"></div>
+    </div>
+
     <div class="panel">
       <div class="pagehead"><div><div class="eyebrow">ACTIVE LISTINGS</div><h2>Browse cards</h2></div><span id="marketFeedCount" class="pill">0 cards</span></div>
       <div class="marketfeedtools">
@@ -194,18 +204,6 @@
 
     <div id="marketOfferHeading" class="hidden marketofferhead"><h2>Available from collectors</h2></div>
     <div id="marketOffers" class="offergrid"></div>
-
-    <details class="panel marketexact">
-      <summary><strong>Search the full Pokémon database</strong><span>Use this if the card is not currently listed.</span></summary>
-      <div class="form marketexactform">
-        <label>Card game<select id="marketGame"><option value="pokemon">Pokémon TCG</option></select></label>
-        <label>Card name<input id="marketSearchName" placeholder="e.g. Umbreon ex"></label>
-        <label>Collector number <span class="muted">optional</span><input id="marketSearchNumber" placeholder="e.g. 161"></label>
-        <button id="marketSearchBtn" class="secondary" type="button">Search all cards</button>
-      </div>
-      <div id="marketSearchStatus" class="status"></div>
-      <div id="marketCardResults" class="results"></div>
-    </details>
 
     <div class="notice"><strong>Marketplace preview:</strong> DeckVault currently helps collectors discover cards and each other. Payments, shipping, offers and in-app messaging are not handled by DeckVault yet.</div>
   </section>
@@ -384,6 +382,6 @@
 <div id="toast" class="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js"></script>
 <script src="app.js?v=10" defer></script>
-<script src="social.js?v=10" defer></script>
+<script src="social.js?v=11" defer></script>
 </body>
 </html>
