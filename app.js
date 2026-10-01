@@ -404,7 +404,7 @@ async function showApp(user,termsJustAccepted=false){
     saveOfflineSnapshot();
     warmOfflineLibraryImages();
     renderDashboard();renderLibrary();
-    if(window.refreshSocialState)setTimeout(()=>window.refreshSocialState(),50);
+    if(window.refreshSocialState)setTimeout(()=>window.refreshSocialState().catch(console.error),50);
     setTimeout(()=>syncErrorBacklog().catch(()=>{}),100);
     return true;
   }catch(e){
