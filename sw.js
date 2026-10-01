@@ -1,10 +1,14 @@
-const CACHE='deckvault-v16-static';
-const CORE=['./','./index.html','./styles.css','./app.js','./social.js','./manifest.json','./icon.svg'];
+const CACHE='deckvault-v17-static';
+const CORE=['./','./index.html','./styles.css','./app.js','./social.js','./manifest.json','./icon.svg','https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js'];
 
 self.addEventListener('install',event=>{
   event.waitUntil(
     caches.open(CACHE)
-      .then(cache=>cache.addAll(CORE))
+      .then(async cache=>{
+        for(const asset of CORE){
+          try{await cache.add(asset);}catch(e){console.warn('Precache skipped',asset,e);}
+        }
+      })
       .then(()=>self.skipWaiting())
   );
 });
@@ -20,13 +24,29 @@ self.addEventListener('activate',event=>{
 self.addEventListener('fetch',event=>{
   if(event.request.method!=='GET')return;
   const url=new URL(event.request.url);
-  if(url.origin!==self.location.origin)return;
+  const sameOrigin=url.origin===self.location.origin;
+  const cacheableExternal=url.hostname==='cdn.jsdelivr.net'||url.hostname==='assets.tcgdex.net';
 
+  if(cacheableExternal){
+    event.respondWith(
+      caches.match(event.request).then(cached=>{
+        if(cached)return cached;
+        return fetch(event.request).then(response=>{
+          const copy=response.clone();
+          caches.open(CACHE).then(cache=>cache.put(event.request,copy)).catch(()=>{});
+          return response;
+        });
+      })
+    );
+    return;
+  }
+
+  if(!sameOrigin)return;
   event.respondWith(
     fetch(event.request)
       .then(response=>{
         const copy=response.clone();
-        caches.open(CACHE).then(cache=>cache.put(event.request,copy));
+        caches.open(CACHE).then(cache=>cache.put(event.request,copy)).catch(()=>{});
         return response;
       })
       .catch(()=>caches.match(event.request).then(cached=>cached||caches.match('./index.html')))
