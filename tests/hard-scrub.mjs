@@ -389,6 +389,7 @@ async function signedInPass(browser, pass) {
 
   // Manual scanner fallback must produce selectable multiple-set matches.
   await page.click('.bottomnav [data-go="scanner"]');
+  await page.locator('#scanManualDetails summary').click();
   await page.fill('#scanManualNumber','125/197');
   await page.click('#scanManualSearch');
   await page.waitForSelector('#scanChoices:not(.hidden)',{timeout:10000});
