@@ -40,6 +40,17 @@
       </form>
       <button id="showSignIn" class="linkbtn" type="button">Back to sign in</button>
     </div>
+    <div id="applicationPane" class="hidden">
+      <div class="eyebrow">REQUEST ACCESS</div>
+      <h1>Apply for DeckVault</h1>
+      <p class="muted">Choose the username you want and submit your email. An administrator must approve the application before an account can be created.</p>
+      <form id="applicationForm" class="form authform">
+        <label>Email<input id="applicationEmail" type="email" autocomplete="email" required placeholder="you@example.com"></label>
+        <label>Requested username<input id="applicationUsername" required minlength="3" maxlength="24" placeholder="collector_name"></label>
+        <button class="primary" type="submit">Submit application</button>
+      </form>
+      <button id="applicationBack" class="linkbtn" type="button">Back to sign in</button>
+    </div>
     <div id="resetPane" class="hidden">
       <div class="eyebrow">PASSWORD RESET</div>
       <h1>Reset password</h1>
@@ -51,6 +62,20 @@
       <button id="resetBack" class="linkbtn" type="button">Back to sign in</button>
     </div>
     <div id="authMessage" class="authmessage"></div>
+  </div>
+</section>
+
+<section id="onboardingGate" class="authgate hidden">
+  <div class="authcard">
+    <div class="authbrand"><div class="brand-mark authmark">DV</div><div><div class="authname">Finish your DeckVault account</div><div class="muted">Set up the profile other collectors will see.</div></div></div>
+    <form id="onboardingForm" class="form authform">
+      <label>Username<input id="onboardingUsername" required minlength="3" maxlength="24" placeholder="collector_name"></label>
+      <label>Display name<input id="onboardingDisplayName" maxlength="60" placeholder="How your name appears"></label>
+      <label>Bio<textarea id="onboardingBio" maxlength="300" placeholder="A little about your collection"></textarea></label>
+      <label>Password<input id="onboardingPassword" type="password" minlength="8" placeholder="Set or update your password"></label>
+      <button class="primary" type="submit">Finish setup</button>
+    </form>
+    <div id="onboardingMessage" class="authmessage"></div>
   </div>
 </section>
 
@@ -78,6 +103,7 @@
       <button data-go="scanner">◎<span>Scan cards<small>Use phone camera</small></span></button>
       <button data-go="lookup">⌕<span>Find a card<small>Pokémon database</small></span></button>
       <button data-go="library">▦<span>Library<small>Browse collection</small></span></button>
+      <button data-go="community">♢<span>Community<small>Profiles & public lists</small></span></button>
       <button data-go="settings">⇩<span>Backup<small>Export your data</small></span></button>
     </div>
     <h2>Recently added</h2>
@@ -119,12 +145,50 @@
     <div id="libraryList" class="library"></div>
   </section>
 
+  <section id="community" class="view">
+    <div class="pagehead"><div><div class="eyebrow">COMMUNITY</div><h1>Collector profiles</h1></div></div>
+    <div class="panel form">
+      <label>Find a username<input id="communitySearch" placeholder="Search username…"></label>
+      <button id="communitySearchBtn" class="primary">Search profiles</button>
+    </div>
+    <div id="communityResults" class="profilegrid"></div>
+    <div id="publicProfileView" class="hidden"></div>
+  </section>
+
   <section id="settings" class="view">
     <div class="pagehead"><div><div class="eyebrow">DATA & SETTINGS</div><h1>Settings</h1></div></div>
     <div class="panel">
       <h3>Account</h3>
       <p id="accountEmail" class="muted"></p>
       <button id="signOutBtn" class="secondary">Sign out</button>
+    </div>
+    <div class="panel form">
+      <h3>My profile</h3>
+      <label>Username<input id="profileUsername" minlength="3" maxlength="24"></label>
+      <label>Display name<input id="profileDisplayName" maxlength="60"></label>
+      <label>Bio<textarea id="profileBio" maxlength="300"></textarea></label>
+      <label>Avatar image URL<input id="profileAvatarUrl" type="url" placeholder="https://…"></label>
+      <button id="saveProfileBtn" class="primary" type="button">Save profile</button>
+    </div>
+    <div class="panel">
+      <h3>Profile details & privacy</h3>
+      <p class="muted">Each detail can be public on your profile or private to you.</p>
+      <div id="profileDetailsForm" class="detailform"></div>
+      <button id="saveProfileDetailsBtn" class="secondary wide" type="button">Save profile details</button>
+    </div>
+    <div class="panel">
+      <h3>My lists</h3>
+      <p class="muted">Public lists appear on your profile. Private lists are visible only to you.</p>
+      <div class="form">
+        <label>List name<input id="newListName" maxlength="80" placeholder="Trade Binder, Favorites, Master Set…"></label>
+        <label>Visibility<select id="newListVisibility"><option value="private">Private</option><option value="public">Public</option></select></label>
+        <button id="createListBtn" class="secondary" type="button">Create list</button>
+      </div>
+      <div id="myLists" class="liststack"></div>
+    </div>
+    <div id="adminPanel" class="panel hidden">
+      <div class="pagehead"><div><div class="eyebrow">ADMIN</div><h3>Account approvals</h3></div><button id="refreshApplications" class="ghost">Refresh</button></div>
+      <div id="applicationQueue" class="liststack"></div>
     </div>
     <div class="panel form">
       <h3>Valuation</h3>
@@ -169,5 +233,6 @@
 <div id="toast" class="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js"></script>
 <script src="app.js" defer></script>
+<script src="social.js" defer></script>
 </body>
 </html>
