@@ -334,11 +334,61 @@ async function adjust(x,d){const q=x.quantity+d;if(q<=0)return removeEntry(x);co
 async function removeEntry(x){if(!confirm('Remove '+x.name+' from this collection?'))return;const {error}=await sb.from('collection_items').delete().eq('id',x.id);if(error)return toast('Could not remove card');await loadCollection();await loadFolders();renderLibrary();renderDashboard();}
 function renderDashboard(){const count=items.reduce((s,x)=>s+Number(x.quantity||0),0),total=items.reduce((s,x)=>s+((x.priceCurrency==='USD'||!x.priceCurrency)?Number(x.price||0)*Number(x.quantity||0):0),0);$('#collectionValue').textContent=money(total);$('#totalCards').textContent=count.toLocaleString();$('#uniqueCards').textContent=items.length.toLocaleString();$('#duplicates').textContent=Math.max(0,count-items.length).toLocaleString();$('#setCount').textContent=new Set(items.map(x=>x.game+':'+x.setId).filter(Boolean)).size.toLocaleString();const r=[...items].sort((a,b)=>new Date(b.addedAt)-new Date(a.addedAt)).slice(0,5),b=$('#recent');b.innerHTML='';if(!r.length){b.className='panel empty';b.textContent='No cards yet.';}else{b.className='panel';r.forEach(x=>b.appendChild(rowFor(x,true)));}}
 
+
+function ebaySoldSearchUrl(x){
+  const terms=[x.name,x.setName,x.localId].filter(Boolean).join(' ');
+  const u=new URL('https://www.ebay.com/sch/i.html');
+  u.searchParams.set('_nkw',terms);
+  u.searchParams.set('LH_Sold','1');
+  u.searchParams.set('LH_Complete','1');
+  return u.toString();
+}
+async function openLibraryCardDetails(x){
+  const box=$('#libraryCardDetails');
+  const total=Number(x.price||0)*Number(x.quantity||0);
+  const img=x.image?'<img src="'+esc(imageUrl(x.image,'high'))+'" alt="'+esc(x.name)+'">':'<div class="librarydetailplaceholder">DV</div>';
+  box.innerHTML='<div class="librarydetailtop">'+img+'<div><div class="eyebrow">'+esc(x.setName||'Collection card')+'</div><h2>'+esc(x.name)+'</h2><div class="muted">'+(x.localId?'#'+esc(x.localId)+' • ':'')+esc(x.variant)+' • '+esc(x.condition)+'</div><div class="detailmetrics"><div><span>Current value</span><strong>'+money(total,x.priceCurrency||'USD')+'</strong></div><div><span>Price paid each</span><strong>'+money(x.pricePaid,'USD')+'</strong></div><div><span>Quantity</span><strong>'+Number(x.quantity||0)+'</strong></div></div></div></div><div class="salescomphead"><div><div class="eyebrow">MARKET COMPS</div><h3>Recent eBay Sales</h3></div><span id="ebayCompStatus" class="pill">Checking…</span></div><div id="ebayCompList" class="salescomplist"><div class="empty">Loading verified comps…</div></div><a id="openEbaySold" class="secondary ebaylink" target="_blank" rel="noopener noreferrer">View reported sold listings on eBay ↗</a><p class="salesdisclaimer">DeckVault only treats a comp as verified when the data source can confirm it remained a completed sale. eBay does not expose refund/cancellation outcomes for arbitrary third-party public sales, so ordinary public “sold” results may include transactions later reversed.</p>';
+  $('#openEbaySold').href=ebaySoldSearchUrl(x);
+  $('#libraryCardDialog').showModal();
+
+  const {data,error}=await sb.from('sales_comps_cache')
+    .select('provider,listing_id,title,sold_price,shipping_price,currency,sold_at,listing_url,image_url,condition_text,sale_status')
+    .eq('game',x.game)
+    .eq('card_id',x.cardId)
+    .eq('sale_status','verified_completed')
+    .order('sold_at',{ascending:false})
+    .limit(20);
+
+  const list=$('#ebayCompList'),status=$('#ebayCompStatus');
+  if(error){
+    console.error(error);
+    status.textContent='Unavailable';
+    list.innerHTML='<div class="empty">Could not load sold comps.</div>';
+    return;
+  }
+  if(!data?.length){
+    status.textContent='No verified feed yet';
+    list.innerHTML='<div class="empty">No verified eBay transactions are available for this card yet. DeckVault will not label ordinary public sold results as final transactions when refund/cancellation status cannot be verified.</div>';
+    return;
+  }
+  status.textContent=data.length+' verified';
+  list.innerHTML='';
+  data.forEach(c=>{
+    const row=document.createElement(c.listing_url?'a':'div');
+    row.className='salescomprow';
+    if(c.listing_url){row.href=c.listing_url;row.target='_blank';row.rel='noopener noreferrer';}
+    const landed=Number(c.sold_price||0)+Number(c.shipping_price||0);
+    row.innerHTML=(c.image_url?'<img src="'+esc(c.image_url)+'" alt="">':'<div class="salescompimg">eBay</div>')+'<div class="salescompmain"><strong>'+esc(c.title)+'</strong><span>'+esc(c.condition_text||'Condition not provided')+'</span><small>'+(c.sold_at?new Date(c.sold_at).toLocaleDateString():'Date unavailable')+' • Verified completed</small></div><div class="salescompprice">'+money(c.sold_price,c.currency||'USD')+(Number(c.shipping_price||0)>0?'<small>+'+money(c.shipping_price,c.currency||'USD')+' ship</small>':'')+'<small>'+money(landed,c.currency||'USD')+' total</small></div>';
+    list.appendChild(row);
+  });
+}
 function libraryCardFor(x){
   const e=document.createElement('article');e.className='librarycard';
   const total=Number(x.price||0)*Number(x.quantity||0);
   const img=x.image?'<img loading="lazy" src="'+esc(imageUrl(x.image))+'" alt="'+esc(x.name)+'">':'<div class="librarycardplaceholder">DV</div>';
   e.innerHTML='<div class="librarycardimage">'+img+'<span class="qtybadge">×'+x.quantity+'</span></div><div class="librarycardbody"><strong>'+esc(x.name)+'</strong><span>'+esc(x.setName||'No set')+(x.localId?' • #'+esc(x.localId):'')+'</span><span>'+esc(x.variant)+' • '+esc(x.condition)+'</span><div class="libraryprices"><div><small>Value</small><b>'+money(total,x.priceCurrency||'USD')+'</b></div><div><small>Paid ea.</small><b>'+money(x.pricePaid,'USD')+'</b></div></div><div class="librarycardactions"><button class="secondary" data-folders>Folders</button><button data-dec>−</button><button data-inc>＋</button><button class="librarydelete" data-delete>×</button></div></div>';
+  e.querySelector('.librarycardimage').onclick=()=>openLibraryCardDetails(x);
+  e.querySelector('.librarycardbody>strong').onclick=()=>openLibraryCardDetails(x);
   e.querySelector('[data-folders]').onclick=()=>openFolderAssignments(x);
   e.querySelector('[data-inc]').onclick=()=>adjust(x,1);
   e.querySelector('[data-dec]').onclick=()=>adjust(x,-1);
