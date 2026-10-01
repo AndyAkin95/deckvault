@@ -39,7 +39,6 @@ async function submitApplication(e){
   const {data,error}=await sb.functions.invoke('submit-account-application',{
     body:{email:$('#applicationEmail').value.trim(),username:$('#applicationUsername').value.trim()}
   });
-window.refreshSocialState=refreshSocialState;
   if(error)return setAuthMessage(error.message||'Could not submit application.',true);
   if(data?.error)return setAuthMessage(data.error,true);
   if(data?.status==='pending') return setAuthMessage('Your application is already pending review.');
@@ -574,3 +573,4 @@ document.addEventListener('DOMContentLoaded',()=>{
   });
   setTimeout(()=>{if(currentUser)refreshSocialState();},250);
 });
+window.refreshSocialState=refreshSocialState;
