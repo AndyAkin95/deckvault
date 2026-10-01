@@ -114,7 +114,7 @@ const MOCK_SUPABASE = String.raw`
   function builder(table){
     const state={table,ops:[]};
     let proxy;
-    const chainMethods=['select','eq','neq','in','not','ilike','like','is','match','contains','order','limit','range','gte','lte','gt','lt','filter'];
+    const chainMethods=['select','eq','neq','in','or','not','ilike','like','is','match','contains','order','limit','range','gte','lte','gt','lt','filter'];
     const mutateMethods=['insert','update','upsert','delete'];
     proxy=new Proxy({},{
       get(_t,prop){
