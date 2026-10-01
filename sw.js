@@ -1,4 +1,4 @@
-const CACHE='deckvault-v14-static';
+const CACHE='deckvault-v16-static';
 const CORE=['./','./index.html','./styles.css','./app.js','./social.js','./manifest.json','./icon.svg'];
 
 self.addEventListener('install',event=>{
