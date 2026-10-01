@@ -1344,7 +1344,7 @@ function parseCardFractions(text){
     const leftParts=fixLeadingDigit(left),rightParts=fixLeadingDigit(right);
     const number=Number(asNumber(leftParts.digits));
     const denominator=Number(asNumber(rightParts.digits));
-    const local=normalizeCollectorId(leftParts.prefix+asNumber(leftParts.digits));
+    const local=leftParts.prefix+asNumber(leftParts.digits);
     if(!denominator||denominator<10||denominator>999||!number||number>9999)continue;
     if(rightParts.prefix&&leftParts.prefix&&rightParts.prefix!==leftParts.prefix)continue;
     fractions.push({localId:local,denominator,raw:m[0].trim()});
@@ -1397,7 +1397,16 @@ async function lookupScanCandidates(fraction,nameHint=''){
   const eligible=scanEligibleSets(fraction,sets);
   const eligibleMap=new Map(eligible.map(s=>[s.id,s]));
   const allSets=new Map(sets.map(s=>[s.id,s]));
-  const briefs=cardsResult.status==='fulfilled'&&Array.isArray(cardsResult.value)?cardsResult.value:[];
+  const briefs=cardsResult.status==='fulfilled'&&Array.isArray(cardsResult.value)?[...cardsResult.value]:[];
+  if(localId&&!briefs.some(c=>normalizeCollectorId(c.localId)===normalizeCollectorId(localId))){
+    const alternate=normalizeCollectorId(localId);
+    if(alternate!==localId){
+      try{
+        const more=await pokemonSearch('',alternate);
+        if(Array.isArray(more))briefs.push(...more);
+      }catch{}
+    }
+  }
   const exact=briefs.filter(c=>!localId||normalizeCollectorId(c.localId)===normalizeCollectorId(localId));
   const enriched=exact.map(c=>{
     const setId=allSets.has(c.id.slice(0,c.id.lastIndexOf('-')))
@@ -1494,7 +1503,7 @@ async function manualScanSearch(){
   if(!raw&&!hint){$('#activeScanStatus').textContent='Enter a printed number or card name.';return;}
   let fraction=parseCardFraction(raw);
   if(!fraction&&raw){
-    const id=normalizeCollectorId(raw.replace(/[^A-Za-z0-9]/g,''));
+    const id=raw.replace(/[^A-Za-z0-9]/g,'').toUpperCase();
     fraction={localId:id,denominator:null,raw};
   }
   $('#activeScanStatus').textContent='Searching for possible matches…';
