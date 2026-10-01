@@ -27,6 +27,7 @@
       </form>
       <button id="showSignUp" class="linkbtn" type="button">Apply for access</button>
       <button id="showReset" class="linkbtn subtle" type="button">Forgot password?</button>
+      <button id="viewTermsAuth" class="linkbtn subtle" type="button">Terms of Use & Privacy Notice</button>
     </div>
     <div id="signupPane" class="hidden">
       <div class="eyebrow">NEW ACCOUNT</div>
@@ -65,6 +66,29 @@
   </div>
 </section>
 
+<section id="bannedGate" class="authgate hidden">
+  <div class="authcard">
+    <div class="authbrand"><div class="brand-mark authmark">DV</div><div><div class="authname">Account suspended</div><div class="muted">This DeckVault account is currently banned.</div></div></div>
+    <div class="panel danger">
+      <h3>Reason</h3>
+      <p id="banReason"></p>
+      <p id="banDate" class="muted"></p>
+    </div>
+    <p class="muted">Your account and records have been preserved for moderation review. A DeckVault administrator may reverse the ban.</p>
+    <button id="bannedSignOut" class="secondary wide" type="button">Sign out</button>
+  </div>
+</section>
+
+<section id="termsGate" class="authgate hidden">
+  <div class="authcard legalcard">
+    <div class="authbrand"><div class="brand-mark authmark">DV</div><div><div class="authname">Terms required</div><div id="termsGateVersion" class="muted"></div></div></div>
+    <div id="termsGateBody" class="legaltext"></div>
+    <label class="termscheck"><input id="acceptTermsCheck" type="checkbox"> <span>I have read and agree to the DeckVault Terms of Use & Privacy Notice.</span></label>
+    <button id="acceptTermsBtn" class="primary wide" type="button" disabled>Accept and continue</button>
+    <button id="termsSignOut" class="secondary wide" type="button">Sign out</button>
+  </div>
+</section>
+
 <section id="onboardingGate" class="authgate hidden">
   <div class="authcard">
     <div class="authbrand"><div class="brand-mark authmark">DV</div><div><div class="authname">Finish your DeckVault account</div><div class="muted">Set up the profile other collectors will see.</div></div></div>
@@ -72,7 +96,7 @@
       <label>Username<input id="onboardingUsername" required minlength="3" maxlength="24" placeholder="collector_name"></label>
       <label>Display name<input id="onboardingDisplayName" maxlength="60" placeholder="How your name appears"></label>
       <label>Bio<textarea id="onboardingBio" maxlength="300" placeholder="A little about your collection"></textarea></label>
-      <label>Password<input id="onboardingPassword" type="password" minlength="8" placeholder="Set or update your password"></label>
+      <label>Password<input id="onboardingPassword" type="password" minlength="12" placeholder="At least 12 characters"></label>
       <button class="primary" type="submit">Finish setup</button>
     </form>
     <div id="onboardingMessage" class="authmessage"></div>
@@ -176,7 +200,10 @@
     <div class="panel">
       <h3>Account</h3>
       <p id="accountEmail" class="muted"></p>
-      <button id="signOutBtn" class="secondary">Sign out</button>
+      <div class="stack">
+        <button id="viewTermsBtn" class="secondary" type="button">View Terms of Use & Privacy Notice</button>
+        <button id="signOutBtn" class="secondary">Sign out</button>
+      </div>
     </div>
     <div class="panel form">
       <h3>Trade / Sell status</h3>
@@ -229,8 +256,22 @@
       <div id="myLists" class="liststack"></div>
     </div>
     <div id="adminPanel" class="panel hidden">
-      <div class="pagehead"><div><div class="eyebrow">ADMIN</div><h3>Account approvals</h3></div><button id="refreshApplications" class="ghost">Refresh</button></div>
+      <div class="eyebrow">ADMIN SECURITY</div>
+      <h3>Administrator controls</h3>
+      <div class="adminsecurity">
+        <div><strong>Authenticator MFA</strong><span id="adminMfaStatus" class="muted">Checking…</span></div>
+        <button id="setupAdminMfaBtn" class="secondary" type="button">Set up 6-digit authenticator</button>
+      </div>
+      <p class="muted">Approvals, denials, bans, and unbans require a confirmation window and a fresh 6-digit authenticator code.</p>
+
+      <div class="pagehead adminsection"><div><div class="eyebrow">ACCOUNT ACCESS</div><h3>Pending applications</h3></div><button id="refreshApplications" class="ghost">Refresh</button></div>
       <div id="applicationQueue" class="liststack"></div>
+
+      <div class="pagehead adminsection"><div><div class="eyebrow">MODERATION</div><h3>User management</h3></div><button id="refreshUsers" class="ghost">Refresh</button></div>
+      <div id="userManagement" class="liststack"></div>
+
+      <div class="pagehead adminsection"><div><div class="eyebrow">AUDIT</div><h3>Recent admin actions</h3></div></div>
+      <div id="adminAuditLog" class="liststack"></div>
     </div>
     <div class="panel form">
       <h3>Valuation</h3>
@@ -273,6 +314,48 @@
 </div>
 
 <dialog id="cardDialog"><form method="dialog"><button class="close" value="cancel">×</button><div id="dialogBody"></div></form></dialog>
+
+<dialog id="termsDialog">
+  <form method="dialog">
+    <button class="close" value="cancel">×</button>
+    <div class="eyebrow">LEGAL</div>
+    <h2 id="termsDialogTitle">DeckVault Terms of Use & Privacy Notice</h2>
+    <div id="termsDialogVersion" class="muted"></div>
+    <div id="termsDialogBody" class="legaltext dialoglegal"></div>
+    <button class="secondary wide" value="cancel">Close</button>
+  </form>
+</dialog>
+
+<dialog id="mfaEnrollDialog">
+  <form method="dialog">
+    <button class="close" value="cancel">×</button>
+    <div class="eyebrow">ADMIN SECURITY</div>
+    <h2>Set up authenticator MFA</h2>
+    <p>Scan this QR code with an authenticator app such as Google Authenticator, Microsoft Authenticator, Authy, or 1Password.</p>
+    <div id="mfaQrWrap" class="mfaqr"></div>
+    <div id="mfaSecret" class="secretbox"></div>
+    <label class="codefield">6-digit code<input id="mfaEnrollCode" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="000000"></label>
+    <div id="mfaEnrollMessage" class="authmessage"></div>
+    <button id="verifyMfaEnrollBtn" class="primary wide" type="button">Verify and enable</button>
+  </form>
+</dialog>
+
+<dialog id="adminActionDialog">
+  <form method="dialog">
+    <button class="close" value="cancel">×</button>
+    <div class="eyebrow">ADMIN CONFIRMATION</div>
+    <h2 id="adminActionTitle">Are you sure?</h2>
+    <p id="adminActionText"></p>
+    <label id="adminActionReasonWrap">Reason / note<textarea id="adminActionReason" maxlength="500" placeholder="Optional unless banning a user"></textarea></label>
+    <label id="adminActionNotesWrap" class="hidden">Private admin notes<textarea id="adminActionNotes" maxlength="1000" placeholder="Visible only in moderation records"></textarea></label>
+    <label class="codefield">6-digit authenticator code<input id="adminActionCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000"></label>
+    <div id="adminActionMessage" class="authmessage"></div>
+    <div class="dialogactions">
+      <button id="confirmAdminActionBtn" class="dangerbtn" type="button">Confirm action</button>
+      <button class="secondary" value="cancel">Cancel</button>
+    </div>
+  </form>
+</dialog>
 <div id="toast" class="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js"></script>
 <script src="app.js" defer></script>
