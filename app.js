@@ -29,6 +29,7 @@ const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{
   }
 });
 let currentUser=null, currentCard=null, stream=null, installPrompt=null, items=[];
+let activeScanWorker=null,activeScanRunning=false,activeScanBusy=false,activeScanTimer=null,activeScanMatch=null,activeScanRejected=null,pokemonSetCache=null;
 let folders=[], folderMembership=new Map(), activeFolderId=null, folderAssignItemId=null;
 const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -290,9 +291,12 @@ async function signUp(e){e.preventDefault();showPane('applicationPane');setAuthM
 async function resetPassword(e){e.preventDefault();setAuthMessage('Sending recovery email…');const {error}=await sb.auth.resetPasswordForEmail($('#resetEmail').value.trim(),{redirectTo:location.origin+location.pathname});if(error)return setAuthMessage(error.message,true);setAuthMessage('Recovery email sent.');}
 async function signOut(){await sb.auth.signOut();items=[];hideAccessGates();showAuth();}
 
-function go(view){$$('.view').forEach(v=>v.classList.toggle('active',v.id===view));$$('.bottomnav button').forEach(b=>b.classList.toggle('active',b.dataset.go===view));window.scrollTo({top:0,behavior:'smooth'});if(view==='dashboard')renderDashboard();if(view==='library')renderLibrary();}
+function go(view){if(view!=='scanner'&&activeScanRunning)stopActiveScan(false);$('.view').forEach(v=>v.classList.toggle('active',v.id===view));$('.bottomnav button').forEach(b=>b.classList.toggle('active',b.dataset.go===view));window.scrollTo({top:0,behavior:'smooth'});if(view==='dashboard')renderDashboard();if(view==='library')renderLibrary();}
 async function pokemonSearch(name,number){const p=new URLSearchParams();if(name)p.set('name',name.trim());if(number)p.set('localId',number.trim());const r=await fetch(API+'/cards?'+p);if(!r.ok)throw new Error('TCGdex search failed ('+r.status+')');return r.json();}
 async function pokemonCard(id){const r=await fetch(API+'/cards/'+encodeURIComponent(id));if(!r.ok)throw new Error('Could not load card');return r.json();}
+async function pokemonSets(){if(pokemonSetCache)return pokemonSetCache;const r=await fetch(API+'/sets');if(!r.ok)throw new Error('Could not load Pokémon sets');pokemonSetCache=await r.json();return pokemonSetCache;}
+async function pokemonSetCard(setId,localId){const r=await fetch(API+'/sets/'+encodeURIComponent(setId)+'/'+encodeURIComponent(localId));if(!r.ok)return null;return r.json();}
+
 function pokemonVariants(c){const v=c.variants||{},o=[];if(v.normal)o.push('Normal');if(v.holo)o.push('Holofoil');if(v.reverse)o.push('Reverse Holofoil');if(v.firstEdition)o.push('1st Edition');if(v.firstEdition&&v.holo)o.push('1st Edition Holofoil');return o.length?[...new Set(o)]:['Normal'];}
 function variantPriceObject(tcg,v){if(!tcg)return null;const m={'Normal':['normal','unlimited'],'Holofoil':['holofoil','holo','unlimited-holofoil'],'Reverse Holofoil':['reverse-holofoil','reverse'],'1st Edition':['1st-edition','first-edition','firstEdition'],'1st Edition Holofoil':['1st-edition-holofoil','first-edition-holofoil']};for(const k of (m[v]||['normal']))if(tcg[k])return tcg[k];return null;}
 function pricePref(){return localStorage.getItem('deckvault-price-source')||'tcgplayer-market';}
@@ -322,6 +326,9 @@ async function addCurrent(){
   if(old)q=await sb.from('collection_items').update(toRow(x)).eq('id',old.id).select().single();
   else q=await sb.from('collection_items').insert({...toRow(x),added_at:now}).select().single();
   if(q.error)return toast('Could not save card');
+  if(currentCard?.set?.id&&currentCard?.id){
+    sb.from('master_set_cards').upsert({user_id:currentUser.id,game:'pokemon',set_id:currentCard.set.id,card_id:currentCard.id},{onConflict:'user_id,game,set_id,card_id'}).then(()=>{});
+  }
   const folderId=$('#addFolder').value;
   if(folderId){
     await sb.from('collection_folder_items').upsert({folder_id:folderId,collection_item_id:q.data.id},{onConflict:'folder_id,collection_item_id'});
@@ -556,9 +563,140 @@ function renderLibrary(){
   else a.forEach(x=>box.appendChild(libraryCardFor(x)));
 }
 async function refreshPrices(){if(!items.length)return toast('No cards to refresh');const btn=$('#refreshPrices');btn.disabled=true;btn.textContent='Refreshing…';for(const id of [...new Set(items.filter(x=>x.game==='pokemon'&&x.entrySource!=='manual'&&!String(x.cardId).startsWith('manual:')).map(x=>x.cardId))].slice(0,50)){try{const c=await pokemonCard(id);for(const x of items.filter(i=>i.cardId===id)){const p=pokemonPrice(c,x.variant);await sb.from('collection_items').update({price:p.value==null?null:Number(p.value),price_currency:p.currency,price_source:p.label,price_updated_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',x.id);}}catch(e){console.warn(e);}}await loadCollection();btn.disabled=false;btn.textContent='Refresh prices';renderLibrary();renderDashboard();toast('Prices refreshed');}
-async function startCamera(){try{if(stream)stream.getTracks().forEach(t=>t.stop());stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});$('#video').srcObject=stream;$('#cameraPlaceholder').classList.add('hidden');$('#video').classList.remove('hidden');$('#capturePreview').classList.add('hidden');$('#captureCard').disabled=false;$('#cameraStatus').textContent='Camera ready';}catch(e){$('#cameraStatus').textContent='Camera blocked';alert('Camera access failed. '+e.message);}}
-function capture(){const v=$('#video');if(!v.videoWidth)return;const c=$('#canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0,c.width,c.height);$('#capturePreview').src=c.toDataURL('image/jpeg',.9);$('#capturePreview').classList.remove('hidden');v.classList.add('hidden');$('#captureCard').classList.add('hidden');$('#retake').classList.remove('hidden');$('#cameraStatus').textContent='Captured';}
+async function startCamera(){try{if(stream)stream.getTracks().forEach(t=>t.stop());stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});$('#video').srcObject=stream;$('#cameraPlaceholder').classList.add('hidden');$('#video').classList.remove('hidden');$('#capturePreview').classList.add('hidden');$('#captureCard').disabled=false;$('#cameraStatus').textContent='Camera ready';return true;}catch(e){$('#cameraStatus').textContent='Camera blocked';alert('Camera access failed. '+e.message);return false;}}
+function capture(){const v=$('#video');if(!v.videoWidth)return;const c=$('#canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0,c.width,c.height);$('#capturePreview').src=c.toDataURL('image/jpeg',.9);$('#capturePreview').classList.remove('hidden');v.classList.add('hidden');$('#captureCard').classList.add('hidden');$('#retake').classList.remove('hidden');$('#cameraStatus').textContent='Captured';stopActiveScan(false);}
 function retake(){$('#capturePreview').classList.add('hidden');$('#video').classList.remove('hidden');$('#captureCard').classList.remove('hidden');$('#retake').classList.add('hidden');$('#cameraStatus').textContent='Camera ready';}
+
+async function ensureActiveScanWorker(){
+  if(activeScanWorker)return activeScanWorker;
+  if(!window.Tesseract)throw new Error('OCR engine failed to load');
+  $('#activeScanStatus').textContent='Loading OCR engine for the first scan…';
+  activeScanWorker=await Tesseract.createWorker('eng',1,{
+    logger:m=>{
+      if(m.status==='recognizing text'&&activeScanRunning)$('#activeScanStatus').textContent='Reading card number… '+Math.round((m.progress||0)*100)+'%';
+    }
+  });
+  await activeScanWorker.setParameters({
+    tessedit_char_whitelist:'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/- ',
+    preserve_interword_spaces:'1'
+  });
+  return activeScanWorker;
+}
+function normalizeScanText(text){
+  return String(text||'').replace(/[|]/g,'I').replace(/\s+/g,' ').trim();
+}
+function parseCardFraction(text){
+  const t=normalizeScanText(text).replace(/\\/g,'/');
+  const matches=[...t.matchAll(/([A-Z]{0,4}\s*\d{1,4}|\d{1,4})\s*\/\s*(\d{2,4})/gi)];
+  if(!matches.length)return null;
+  const m=matches[matches.length-1];
+  return {localId:m[1].replace(/\s+/g,''),denominator:Number(m[2]),raw:m[0]};
+}
+function levenshtein(a,b){
+  a=String(a||'').toLowerCase();b=String(b||'').toLowerCase();
+  const dp=Array.from({length:b.length+1},(_,i)=>i);
+  for(let i=1;i<=a.length;i++){let prev=dp[0];dp[0]=i;for(let j=1;j<=b.length;j++){const cur=dp[j];dp[j]=Math.min(dp[j]+1,dp[j-1]+1,prev+(a[i-1]===b[j-1]?0:1));prev=cur;}}
+  return dp[b.length];
+}
+async function ocrRegion(yFrac,heightFrac,whitelist){
+  const v=$('#video');if(!v.videoWidth||!v.videoHeight)return '';
+  const c=document.createElement('canvas');
+  const sx=0,sy=Math.floor(v.videoHeight*yFrac),sw=v.videoWidth,sh=Math.max(1,Math.floor(v.videoHeight*heightFrac));
+  const scale=Math.min(2,1600/sw);
+  c.width=Math.max(1,Math.floor(sw*scale));c.height=Math.max(1,Math.floor(sh*scale));
+  const ctx=c.getContext('2d');
+  ctx.filter='grayscale(1) contrast(1.8)';
+  ctx.drawImage(v,sx,sy,sw,sh,0,0,c.width,c.height);
+  const worker=await ensureActiveScanWorker();
+  if(whitelist)await worker.setParameters({tessedit_char_whitelist:whitelist});
+  const result=await worker.recognize(c);
+  return normalizeScanText(result?.data?.text||'');
+}
+async function resolveActiveScanCandidate(fraction){
+  const sets=await pokemonSets();
+  let likely=(sets||[]).filter(s=>Number(s.cardCount?.official)===fraction.denominator);
+  if(!likely.length)likely=(sets||[]).filter(s=>Number(s.cardCount?.total)===fraction.denominator);
+  if(!likely.length)return null;
+  const results=[];
+  for(const set of likely.slice(0,18)){
+    try{const card=await pokemonSetCard(set.id,fraction.localId);if(card)results.push(card);}catch{}
+  }
+  if(!results.length)return null;
+  if(results.length===1)return results[0];
+  let nameText='';
+  try{
+    nameText=await ocrRegion(.02,.20,'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz -');
+  }catch{}
+  const words=nameText.split(/\s+/).filter(w=>w.length>2);
+  if(words.length){
+    results.sort((a,b)=>{
+      const score=c=>Math.min(...words.map(w=>levenshtein(w,c.name)),levenshtein(nameText,c.name));
+      return score(a)-score(b);
+    });
+  }
+  return results[0];
+}
+function showActiveScanCandidate(card,fraction){
+  if(!card)return;
+  activeScanMatch=card;activeScanRunning=false;
+  clearTimeout(activeScanTimer);
+  $('#activeScanCandidateImage').src=imageUrl(card.image,'high');
+  $('#activeScanCandidateName').textContent=card.name;
+  $('#activeScanCandidateMeta').textContent=(card.set?.name||'Pokémon TCG')+' • #'+card.localId+(fraction?.raw?' • read '+fraction.raw:'');
+  $('#activeScanCandidate').classList.remove('hidden');
+  $('#activeScanGuide').classList.add('hidden');
+  $('#activeScanStatus').textContent='Does this match the card in front of the camera?';
+  $('#activeScanBtn').textContent='Resume Active Scan';
+}
+async function activeScanStep(){
+  if(!activeScanRunning||activeScanBusy||!stream)return;
+  activeScanBusy=true;
+  try{
+    $('#activeScanStatus').textContent='Reading the bottom card number…';
+    const text=await ocrRegion(.68,.30,'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/- ');
+    const fraction=parseCardFraction(text);
+    if(!fraction){
+      $('#activeScanStatus').textContent='Looking for a number like 161/197…';
+    }else{
+      $('#activeScanStatus').textContent='Found '+fraction.raw+' — matching the set…';
+      const card=await resolveActiveScanCandidate(fraction);
+      if(card&&(!activeScanRejected||activeScanRejected.id!==card.id||Date.now()>activeScanRejected.until)){
+        showActiveScanCandidate(card,fraction);return;
+      }
+      $('#activeScanStatus').textContent=card?'That match was just rejected — keep the next card steady.':'Number found, but no confident card match yet.';
+    }
+  }catch(e){
+    console.warn('Active scan',e);
+    $('#activeScanStatus').textContent='Could not read this frame. Hold the card steady and reduce glare.';
+  }finally{
+    activeScanBusy=false;
+    if(activeScanRunning)activeScanTimer=setTimeout(activeScanStep,700);
+  }
+}
+async function startActiveScan(){
+  if(activeScanMatch){activeScanMatch=null;$('#activeScanCandidate').classList.add('hidden');}
+  if(!stream){const ok=await startCamera();if(!ok)return;}
+  activeScanRunning=true;
+  $('#activeScanGuide').classList.remove('hidden');
+  $('#activeScanBtn').textContent='Stop Active Scan';
+  $('#cameraStatus').textContent='Active scanning';
+  try{await ensureActiveScanWorker();activeScanStep();}catch(e){activeScanRunning=false;$('#activeScanStatus').textContent=e.message;$('#activeScanBtn').textContent='Start Active Scan (Beta)';}
+}
+function stopActiveScan(update=true){
+  activeScanRunning=false;activeScanBusy=false;clearTimeout(activeScanTimer);activeScanTimer=null;
+  $('#activeScanGuide')?.classList.add('hidden');
+  if(update){$('#activeScanBtn').textContent='Start Active Scan (Beta)';$('#activeScanStatus').textContent='Active Scan paused.';}
+}
+async function toggleActiveScan(){if(activeScanRunning){stopActiveScan();return;}await startActiveScan();}
+function rejectActiveScanMatch(){
+  if(activeScanMatch)activeScanRejected={id:activeScanMatch.id,until:Date.now()+8000};
+  activeScanMatch=null;$('#activeScanCandidate').classList.add('hidden');startActiveScan();
+}
+function confirmActiveScanMatch(){
+  const card=activeScanMatch;if(!card)return;
+  activeScanMatch=null;$('#activeScanCandidate').classList.add('hidden');stopActiveScan(false);
+  openCard(card.id);
+}
 function download(content,type,name){const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 const csv=v=>{const s=String(v??'');return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
 async function exportJson(){download(JSON.stringify({format:'deckvault-backup',version:2,exportedAt:new Date().toISOString(),collection:items},null,2),'application/json','deckvault-backup-'+new Date().toISOString().slice(0,10)+'.json');}
@@ -576,7 +714,7 @@ async function init(){
   $('#acceptTermsCheck').onchange=e=>{$('#acceptTermsBtn').disabled=!e.target.checked;};
   $('#acceptTermsBtn').onclick=acceptCurrentTerms;
   $('#searchBtn').onclick=search;$('#searchName').onkeydown=e=>{if(e.key==='Enter')search();};$('#searchNumber').onkeydown=e=>{if(e.key==='Enter')search();};
-  $('#librarySearch').oninput=renderLibrary;$('#librarySort').onchange=renderLibrary;$('#refreshPrices').onclick=refreshPrices;$('#manualAddCardBtn').onclick=openManualCard;$('#saveManualCardBtn').onclick=saveManualCard;$('#newFolderBtn').onclick=createFolder;$('#manageFoldersBtn').onclick=()=>{renderFolderManager();$('#manageFoldersDialog').showModal();};$('#saveFolderAssignmentsBtn').onclick=saveFolderAssignments;$('#startCamera').onclick=startCamera;$('#captureCard').onclick=capture;$('#retake').onclick=retake;
+  $('#librarySearch').oninput=renderLibrary;$('#librarySort').onchange=renderLibrary;$('#refreshPrices').onclick=refreshPrices;$('#manualAddCardBtn').onclick=openManualCard;$('#saveManualCardBtn').onclick=saveManualCard;$('#newFolderBtn').onclick=createFolder;$('#manageFoldersBtn').onclick=()=>{renderFolderManager();$('#manageFoldersDialog').showModal();};$('#saveFolderAssignmentsBtn').onclick=saveFolderAssignments;$('#startCamera').onclick=startCamera;$('#activeScanBtn').onclick=toggleActiveScan;$('#activeScanReject').onclick=rejectActiveScanMatch;$('#activeScanConfirm').onclick=confirmActiveScanMatch;$('#captureCard').onclick=capture;$('#retake').onclick=retake;
   $('#exportJson').onclick=exportJson;$('#exportCsv').onclick=()=>exportCsv(false);$('#exportCollectr').onclick=()=>exportCsv(true);$('#importJson').onchange=async e=>{if(e.target.files[0])try{await importBackup(e.target.files[0]);}catch(err){alert(err.message);}e.target.value='';};
   $('#clearData').onclick=async()=>{if(confirm('Delete every card in your DeckVault account collection?')){const {error}=await sb.from('collection_items').delete().eq('user_id',currentUser.id);if(error)return toast('Could not clear collection');await loadCollection();renderDashboard();renderLibrary();toast('Collection cleared');}};
   $('#priceSource').value=pricePref();$('#priceSource').onchange=e=>{localStorage.setItem('deckvault-price-source',e.target.value);toast('Price source saved');};
