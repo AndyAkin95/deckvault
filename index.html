@@ -10,7 +10,7 @@
   <title>DeckVault</title>
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=12">
+  <link rel="stylesheet" href="styles.css?v=13">
 </head>
 <body>
 <section id="authGate" class="authgate">
@@ -504,9 +504,16 @@
     <button id="createForumThreadBtn" class="primary wide" type="button">Create thread</button>
   </form>
 </dialog>
+<dialog id="libraryCardDialog">
+  <form method="dialog">
+    <button class="close" value="cancel">×</button>
+    <div id="libraryCardDetails"></div>
+  </form>
+</dialog>
+
 <div id="toast" class="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js"></script>
-<script src="app.js?v=12" defer></script>
-<script src="social.js?v=11" defer></script>
+<script src="app.js?v=13" defer></script>
+<script src="social.js?v=13" defer></script>
 </body>
 </html>
