@@ -36,7 +36,7 @@ const OFFLINE_QUEUE_PREFIX='deckvault-offline-queue-v1:';
 const OFFLINE_CONFLICT_PREFIX='deckvault-offline-conflicts-v1:';
 let currentCopyItem=null,currentWatchState=null;
 let analyticsSetCache=null;
-const APP_BUILD='v24';
+const APP_BUILD='v24scan1';
 const ERROR_BACKLOG_KEY='deckvault-error-backlog-v1';
 const LAST_USER_KEY='deckvault-last-user-id';
 let errorLogSyncing=false,errorLogInternal=false,errorBreadcrumbs=[];
