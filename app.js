@@ -57,6 +57,12 @@ function offlineCacheKey(userId){return 'deckvault-offline-v'+OFFLINE_CACHE_VERS
 function serializeFolderMembership(){
   return [...folderMembership.entries()].map(([folderId,set])=>[folderId,[...set]]);
 }
+function warmOfflineLibraryImages(){
+  if(!('serviceWorker' in navigator)||!items.length)return;
+  const urls=[...new Set(items.filter(x=>x.image).map(x=>imageUrl(x.image,'low')).filter(Boolean))].slice(0,300);
+  if(!urls.length)return;
+  navigator.serviceWorker.ready.then(reg=>reg.active?.postMessage({type:'CACHE_URLS',urls})).catch(()=>{});
+}
 function saveOfflineSnapshot(){
   if(!currentUser||offlineMode)return;
   try{
@@ -207,6 +213,7 @@ async function showApp(user,termsJustAccepted=false){
     const foldersOK=await loadFolders();
     if(collectionOK===false||foldersOK===false)throw new Error('Network data load failed');
     saveOfflineSnapshot();
+    warmOfflineLibraryImages();
     renderDashboard();renderLibrary();
     if(window.refreshSocialState)setTimeout(()=>window.refreshSocialState(),50);
     return true;
