@@ -27,6 +27,9 @@ function staticAudit() {
     const nativeBad=[...src.matchAll(/document\.querySelector\([^)]*\)\.(forEach|map|filter|some|every|reduce)\b/g)]
       .map(m=>m[0]);
     assert(!nativeBad.length, name+' uses querySelector as a collection: '+nativeBad.join(', '));
+
+    const tripleDollar=[...src.matchAll(/\$\$\$\(/g)].map(m=>m.index);
+    assert(!tripleDollar.length, name+' contains accidental $$() selector helper usage at offsets '+tripleDollar.join(', '));
   }
 
   const appInitStart=app.indexOf('async function init(){');
