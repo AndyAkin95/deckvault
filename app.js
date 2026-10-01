@@ -755,9 +755,9 @@ async function loadPriceHistory(x){
     renderHistoryChart(rows.filter(r=>r.provider===p&&r.metric===m),activeHistoryRange);
   };
   selector.onchange=draw;
-  $$$('.historyrange').forEach(b=>b.onclick=()=>{
+  $('.historyrange').forEach(b=>b.onclick=()=>{
     activeHistoryRange=b.dataset.range;
-    $$$('.historyrange').forEach(x=>x.classList.toggle('active',x===b));
+    $('.historyrange').forEach(x=>x.classList.toggle('active',x===b));
     draw();
   });
   draw();
