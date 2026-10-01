@@ -250,7 +250,7 @@
     <div id="marketOfferHeading" class="hidden marketofferhead"><h2>Available from collectors</h2></div>
     <div id="marketOffers" class="offergrid"></div>
 
-    <div class="notice"><strong>Marketplace preview:</strong> DeckVault currently helps collectors discover cards and each other. Payments, shipping, offers and in-app messaging are not handled by DeckVault yet.</div>
+    <div class="notice"><strong>Marketplace preview:</strong> DeckVault helps collectors discover cards and contact each other. Payments, escrow, shipping, and transaction guarantees are not handled by DeckVault.</div>
   </section>
 
   <section id="community" class="view">
@@ -258,6 +258,7 @@
 
     <div class="communitytabs">
       <button class="active" data-community-tab="chat" type="button">Live Chat</button>
+      <button data-community-tab="messages" type="button">Messages <span id="privateMessageBadge" class="tabbadge hidden">0</span></button>
       <button data-community-tab="forums" type="button">Forums</button>
       <button data-community-tab="profiles" type="button">Collectors</button>
     </div>
@@ -270,6 +271,35 @@
           <input id="communityChatInput" maxlength="1000" autocomplete="off" placeholder="Message the community…">
           <button class="primary" type="submit">Send</button>
         </form>
+      </div>
+    </div>
+
+    <div id="communityMessagesPane" class="communitypane">
+      <div class="privatemessages">
+        <aside class="panel privateinbox">
+          <div class="pagehead"><div><div class="eyebrow">PRIVATE</div><h2>Messages</h2></div><button id="refreshPrivateMessages" class="ghost" type="button">Refresh</button></div>
+          <div class="messagerecipientsearch">
+            <input id="privateMessageSearch" maxlength="24" autocomplete="off" placeholder="Find a collector…">
+            <button id="privateMessageSearchBtn" class="secondary" type="button">Find</button>
+          </div>
+          <div id="privateMessageSearchResults" class="messagerecipientresults"></div>
+          <div id="privateConversationList" class="conversationlist"><div class="empty">No private conversations yet.</div></div>
+        </aside>
+        <section class="panel privatethreadpanel">
+          <div id="privateConversationEmpty" class="privateconversationempty">
+            <div class="privateemptyicon">✉</div>
+            <strong>Your private messages</strong>
+            <span>Select a conversation or find a collector to start one.</span>
+          </div>
+          <div id="privateConversationView" class="hidden">
+            <div id="privateConversationHeader" class="privateconversationheader"></div>
+            <div id="privateMessageThread" class="privatemessagethread"></div>
+            <form id="privateMessageForm" class="privatecomposer">
+              <textarea id="privateMessageInput" maxlength="4000" rows="2" placeholder="Write a private message…"></textarea>
+              <button class="primary" type="submit">Send</button>
+            </form>
+          </div>
+        </section>
       </div>
     </div>
 
@@ -301,123 +331,165 @@
 
   <section id="settings" class="view">
     <div class="pagehead"><div><div class="eyebrow">DATA & SETTINGS</div><h1>Settings</h1></div></div>
-    <div class="panel">
-      <h3>Account</h3>
-      <p id="accountEmail" class="muted"></p>
-      <div class="stack">
-        <button id="viewTermsBtn" class="secondary" type="button">View Terms of Use & Privacy Notice</button>
-        <button id="signOutBtn" class="secondary">Sign out</button>
-      </div>
-    </div>
-    <div class="panel form">
-      <h3>Trade / Sell status</h3>
-      <label>Marketplace availability
-        <select id="marketplaceMode">
-          <option value="off">Not open to trades or sales</option>
-          <option value="trade">Trade only</option>
-          <option value="sell">Sell / cash only</option>
-          <option value="both">Trade + Sell</option>
-        </select>
-      </label>
-      <label>Marketplace note<textarea id="marketplaceNote" maxlength="300" placeholder="What you collect, trade preferences, shipping notes, etc."></textarea></label>
-      <button id="saveMarketplaceBtn" class="primary" type="button">Save marketplace status</button>
-      <p class="muted">Turning marketplace availability off hides your permanent Trade / Sell list without deleting its contents.</p>
-    </div>
-    <div class="panel form">
-      <h3>My profile</h3>
-      <label>Username<input id="profileUsername" minlength="3" maxlength="24"></label>
-      <label>Display name<input id="profileDisplayName" maxlength="60"></label>
-      <label>Bio<textarea id="profileBio" maxlength="300"></textarea></label>
-      <label>Avatar image URL<input id="profileAvatarUrl" type="url" placeholder="https://…"></label>
-      <label>Master Set checklist visibility<select id="masterSetsVisibility"><option value="public">Public on profile</option><option value="private">Private</option></select></label>
-      <button id="saveProfileBtn" class="primary" type="button">Save profile</button>
-    </div>
-    <div class="panel">
-      <h3>Profile details & privacy</h3>
-      <p class="muted">Each detail can be public on your profile or private to you.</p>
-      <div id="profileDetailsForm" class="detailform"></div>
-      <button id="saveProfileDetailsBtn" class="secondary wide" type="button">Save profile details</button>
-    </div>
-    <div class="panel">
-      <div class="pagehead"><div><div class="eyebrow">PERMANENT LIST</div><h3>Trade / Sell list</h3></div><span id="tradeListStatus" class="pill">Hidden</span></div>
-      <p class="muted">This list cannot be deleted. Add cards from your collection that you are willing to trade or sell.</p>
-      <div class="tradeaddgrid">
-        <label>Card<select id="tradeCardSelect"><option value="">Choose a card…</option></select></label>
-        <label>Offer quantity<input id="tradeOfferQuantity" type="number" min="1" value="1"></label>
-        <label>Cash asking price <span class="muted">optional</span><input id="tradeAskingPrice" type="number" min="0" step="0.01" placeholder="0.00"></label>
-        <label>Offer note <span class="muted">optional</span><input id="tradeOfferNote" maxlength="160" placeholder="Trade priority, condition note…"></label>
-        <button id="addTradeCardBtn" class="secondary" type="button">Add / update listing</button>
-      </div>
-      <div id="tradeListItems" class="liststack"></div>
-    </div>
-    <div class="panel">
-      <h3>My custom lists</h3>
-      <p class="muted">Public custom lists appear on your profile. Private lists are visible only to you.</p>
-      <div class="form">
-        <label>List name<input id="newListName" maxlength="80" placeholder="Trade Binder, Favorites, Master Set…"></label>
-        <label>Visibility<select id="newListVisibility"><option value="private">Private</option><option value="public">Public</option></select></label>
-        <button id="createListBtn" class="secondary" type="button">Create list</button>
-      </div>
-      <div id="myLists" class="liststack"></div>
-    </div>
-    <div id="adminPanel" class="panel hidden">
-      <div class="eyebrow">ADMIN SECURITY</div>
-      <h3>Administrator controls</h3>
-      <div class="adminsecurity">
-        <div><strong>Authenticator MFA</strong><span id="adminMfaStatus" class="muted">Checking…</span></div>
-        <button id="setupAdminMfaBtn" class="secondary" type="button">Set up 6-digit authenticator</button>
-      </div>
-      <p class="muted">Approvals, denials, bans, and unbans require a confirmation window and a fresh 6-digit authenticator code.</p>
 
-      <div class="pagehead adminsection"><div><div class="eyebrow">ACCOUNT ACCESS</div><h3>Pending applications</h3></div><button id="refreshApplications" class="ghost">Refresh</button></div>
-      <div id="applicationQueue" class="liststack"></div>
+    <div class="settingsnav panel">
+      <label for="settingsSectionSelect">Settings section</label>
+      <select id="settingsSectionSelect">
+        <option value="account">Account</option>
+        <option value="profile">Profile & Privacy</option>
+        <option value="marketplace">Marketplace & Trade</option>
+        <option value="lists">Custom Lists</option>
+        <option value="valuation">Valuation</option>
+        <option value="backup">Backup & Portability</option>
+        <option value="diagnostics">Diagnostics</option>
+        <option value="data">Collection Data</option>
+      </select>
+      <small id="settingsSectionHint" class="muted">Account access, legal information, and sign out.</small>
+    </div>
 
-      <div class="pagehead adminsection"><div><div class="eyebrow">MODERATION</div><h3>User management</h3></div><button id="refreshUsers" class="ghost">Refresh</button></div>
-      <div id="userManagement" class="liststack"></div>
+    <div class="settingspane active" data-settings-pane="account">
+      <div class="panel">
+        <h3>Account</h3>
+        <p id="accountEmail" class="muted"></p>
+        <div class="stack">
+          <button id="viewTermsBtn" class="secondary" type="button">View Terms of Use & Privacy Notice</button>
+          <button id="signOutBtn" class="secondary">Sign out</button>
+        </div>
+      </div>
+    </div>
 
-      <div class="pagehead adminsection"><div><div class="eyebrow">AUDIT</div><h3>Recent admin actions</h3></div></div>
-      <div id="adminAuditLog" class="liststack"></div>
-    </div>
-    <div class="panel form">
-      <h3>Valuation</h3>
-      <label>Pokémon price source
-        <select id="priceSource">
-          <option value="tcgplayer-market">TCGplayer Market</option>
-          <option value="tcgplayer-mid">TCGplayer Mid</option>
-          <option value="cardmarket-30">Cardmarket 30-day average</option>
-          <option value="cardmarket-7">Cardmarket 7-day average</option>
-        </select>
-      </label>
-    </div>
-    <div class="panel">
-      <div class="pagehead">
-        <div><div class="eyebrow">DIAGNOSTICS</div><h3>Error Backlog</h3></div>
-        <button id="refreshErrorLog" class="ghost" type="button">Refresh</button>
+    <div class="settingspane" data-settings-pane="profile">
+      <div class="panel form">
+        <h3>My profile</h3>
+        <label>Username<input id="profileUsername" minlength="3" maxlength="24"></label>
+        <label>Display name<input id="profileDisplayName" maxlength="60"></label>
+        <label>Bio<textarea id="profileBio" maxlength="300"></textarea></label>
+        <label>Avatar image URL<input id="profileAvatarUrl" type="url" placeholder="https://…"></label>
+        <label>Master Set checklist visibility<select id="masterSetsVisibility"><option value="public">Public on profile</option><option value="private">Private</option></select></label>
+        <button id="saveProfileBtn" class="primary" type="button">Save profile</button>
       </div>
-      <p class="muted">DeckVault saves crashes and runtime errors locally first, then syncs them to your account when online. Passwords, auth tokens, and likely secrets are redacted before storage.</p>
-      <div id="errorLogStatus" class="status">No diagnostics loaded yet.</div>
-      <div id="errorLogList" class="errorloglist"></div>
-      <div class="stack">
-        <button id="copyDiagnostics" class="secondary" type="button">Copy diagnostic bundle</button>
-        <button id="exportDiagnostics" class="secondary" type="button">Download diagnostics (.json)</button>
+      <div class="panel">
+        <h3>Profile details & privacy</h3>
+        <p class="muted">Each detail can be public on your profile or private to you.</p>
+        <div id="profileDetailsForm" class="detailform"></div>
+        <button id="saveProfileDetailsBtn" class="secondary wide" type="button">Save profile details</button>
       </div>
     </div>
-    <div class="panel">
-      <h3>Backup & portability</h3>
-      <p>Your master collection is stored in your authenticated DeckVault account. Export backups whenever you want.</p>
-      <div class="stack">
-        <button id="exportJson" class="secondary">Download master backup (.json)</button>
-        <button id="exportCsv" class="secondary">Download collection (.csv)</button>
-        <button id="exportCollectr" class="secondary">Download Collectr transfer CSV</button>
-        <label class="filebtn">Restore master backup<input id="importJson" type="file" accept=".json,application/json"></label>
+
+    <div class="settingspane" data-settings-pane="marketplace">
+      <div class="panel form">
+        <h3>Trade / Sell status</h3>
+        <label>Marketplace availability
+          <select id="marketplaceMode">
+            <option value="off">Not open to trades or sales</option>
+            <option value="trade">Trade only</option>
+            <option value="sell">Sell / cash only</option>
+            <option value="both">Trade + Sell</option>
+          </select>
+        </label>
+        <label>Marketplace note<textarea id="marketplaceNote" maxlength="300" placeholder="What you collect, trade preferences, shipping notes, etc."></textarea></label>
+        <button id="saveMarketplaceBtn" class="primary" type="button">Save marketplace status</button>
+        <p class="muted">Turning marketplace availability off hides your permanent Trade / Sell list without deleting its contents.</p>
+      </div>
+      <div class="panel">
+        <div class="pagehead"><div><div class="eyebrow">PERMANENT LIST</div><h3>Trade / Sell list</h3></div><span id="tradeListStatus" class="pill">Hidden</span></div>
+        <p class="muted">This list cannot be deleted. Add cards from your collection that you are willing to trade or sell.</p>
+        <div class="tradeaddgrid">
+          <label>Card<select id="tradeCardSelect"><option value="">Choose a card…</option></select></label>
+          <label>Offer quantity<input id="tradeOfferQuantity" type="number" min="1" value="1"></label>
+          <label>Cash asking price <span class="muted">optional</span><input id="tradeAskingPrice" type="number" min="0" step="0.01" placeholder="0.00"></label>
+          <label>Offer note <span class="muted">optional</span><input id="tradeOfferNote" maxlength="160" placeholder="Trade priority, condition note…"></label>
+          <button id="addTradeCardBtn" class="secondary" type="button">Add / update listing</button>
+        </div>
+        <div id="tradeListItems" class="liststack"></div>
       </div>
     </div>
-    <div class="panel danger">
-      <h3>Collection data</h3>
-      <p class="muted">This deletes only the signed-in account's DeckVault collection.</p>
-      <button id="clearData" class="dangerbtn">Clear my collection</button>
+
+    <div class="settingspane" data-settings-pane="lists">
+      <div class="panel">
+        <h3>My custom lists</h3>
+        <p class="muted">Public custom lists appear on your profile. Private lists are visible only to you.</p>
+        <div class="form">
+          <label>List name<input id="newListName" maxlength="80" placeholder="Trade Binder, Favorites, Master Set…"></label>
+          <label>Visibility<select id="newListVisibility"><option value="private">Private</option><option value="public">Public</option></select></label>
+          <button id="createListBtn" class="secondary" type="button">Create list</button>
+        </div>
+        <div id="myLists" class="liststack"></div>
+      </div>
     </div>
-    <div class="panel"><strong>DeckVault v0.4</strong><p class="muted">Admin-approved accounts, collector profiles, public/private lists, and Trade / Sell marketplace discovery.</p></div>
+
+    <div class="settingspane" data-settings-pane="valuation">
+      <div class="panel form">
+        <h3>Valuation</h3>
+        <label>Pokémon price source
+          <select id="priceSource">
+            <option value="tcgplayer-market">TCGplayer Market</option>
+            <option value="tcgplayer-mid">TCGplayer Mid</option>
+            <option value="cardmarket-30">Cardmarket 30-day average</option>
+            <option value="cardmarket-7">Cardmarket 7-day average</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <div class="settingspane" data-settings-pane="backup">
+      <div class="panel">
+        <h3>Backup & portability</h3>
+        <p>Your master collection is stored in your authenticated DeckVault account. Export backups whenever you want.</p>
+        <div class="stack">
+          <button id="exportJson" class="secondary">Download master backup (.json)</button>
+          <button id="exportCsv" class="secondary">Download collection (.csv)</button>
+          <button id="exportCollectr" class="secondary">Download Collectr transfer CSV</button>
+          <label class="filebtn">Restore master backup<input id="importJson" type="file" accept=".json,application/json"></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="settingspane" data-settings-pane="diagnostics">
+      <div class="panel">
+        <div class="pagehead">
+          <div><div class="eyebrow">DIAGNOSTICS</div><h3>Error Backlog</h3></div>
+          <button id="refreshErrorLog" class="ghost" type="button">Refresh</button>
+        </div>
+        <p class="muted">DeckVault saves crashes and runtime errors locally first, then syncs them to your account when online. Passwords, auth tokens, and likely secrets are redacted before storage.</p>
+        <div id="errorLogStatus" class="status">No diagnostics loaded yet.</div>
+        <div id="errorLogList" class="errorloglist"></div>
+        <div class="stack">
+          <button id="copyDiagnostics" class="secondary" type="button">Copy diagnostic bundle</button>
+          <button id="exportDiagnostics" class="secondary" type="button">Download diagnostics (.json)</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settingspane" data-settings-pane="data">
+      <div class="panel danger">
+        <h3>Collection data</h3>
+        <p class="muted">This deletes only the signed-in account's DeckVault collection.</p>
+        <button id="clearData" class="dangerbtn">Clear my collection</button>
+      </div>
+      <div class="panel"><strong>DeckVault v0.5</strong><p class="muted">Private messaging, organized settings, collector profiles, public/private lists, and Trade / Sell discovery.</p></div>
+    </div>
+
+    <div id="adminPanel" class="settingspane" data-settings-pane="admin">
+      <div class="panel">
+        <div class="eyebrow">ADMIN SECURITY</div>
+        <h3>Administrator controls</h3>
+        <div class="adminsecurity">
+          <div><strong>Authenticator MFA</strong><span id="adminMfaStatus" class="muted">Checking…</span></div>
+          <button id="setupAdminMfaBtn" class="secondary" type="button">Set up 6-digit authenticator</button>
+        </div>
+        <p class="muted">Approvals, denials, bans, and unbans require a confirmation window and a fresh 6-digit authenticator code.</p>
+
+        <div class="pagehead adminsection"><div><div class="eyebrow">ACCOUNT ACCESS</div><h3>Pending applications</h3></div><button id="refreshApplications" class="ghost">Refresh</button></div>
+        <div id="applicationQueue" class="liststack"></div>
+
+        <div class="pagehead adminsection"><div><div class="eyebrow">MODERATION</div><h3>User management</h3></div><button id="refreshUsers" class="ghost">Refresh</button></div>
+        <div id="userManagement" class="liststack"></div>
+
+        <div class="pagehead adminsection"><div><div class="eyebrow">AUDIT</div><h3>Recent admin actions</h3></div></div>
+        <div id="adminAuditLog" class="liststack"></div>
+      </div>
+    </div>
   </section>
 </main>
 
