@@ -625,12 +625,19 @@ function populateManualFolderSelect(){
   const sel=$('#manualFolder');if(!sel)return;
   sel.innerHTML='<option value="">Main Library only</option>'+folders.map(f=>'<option value="'+esc(f.id)+'">'+esc(f.name)+'</option>').join('');
 }
-async function createFolder(){if(!requireOnline('Creating folders needs an internet connection.'))return;
+async function createFolder(){
   const name=prompt('Folder name');
   if(!name||!name.trim())return;
-  const {error}=await sb.from('collection_folders').insert({user_id:currentUser.id,name:name.trim()});
+  const clean=name.trim(),id=crypto.randomUUID(),now=new Date().toISOString();
+  if(offlineMode||!navigator.onLine){
+    folders.push({id,user_id:currentUser.id,name:clean,created_at:now,updated_at:now});
+    folders.sort((a,b)=>a.name.localeCompare(b.name));
+    queueOfflineMutation('folder_create',{id,user_id:currentUser.id,name:clean,created_at:now,updated_at:now});
+    renderFolderChips();populateManualFolderSelect();renderLibrary();return;
+  }
+  const {error}=await sb.from('collection_folders').insert({user_id:currentUser.id,name:clean});
   if(error)return toast(error.code==='23505'?'A folder with that name already exists':'Could not create folder');
-  await loadFolders();renderLibrary();toast('Folder created');
+  await loadFolders();saveOfflineSnapshot();renderLibrary();toast('Folder created');
 }
 function renderFolderManager(){
   const box=$('#folderManagerList');box.innerHTML='';
@@ -668,9 +675,18 @@ function openFolderAssignments(item){
   });
   $('#folderAssignDialog').showModal();
 }
-async function saveFolderAssignments(){if(!requireOnline('Changing folders needs an internet connection.'))return;
+async function saveFolderAssignments(){
   if(!folderAssignItemId)return;
   const selected=Array.from(document.querySelectorAll('#folderAssignOptions input:checked')).map(x=>x.value);
+  if(offlineMode||!navigator.onLine){
+    folders.forEach(folder=>{
+      if(!folderMembership.has(folder.id))folderMembership.set(folder.id,new Set());
+      const set=folderMembership.get(folder.id);
+      selected.includes(folder.id)?set.add(folderAssignItemId):set.delete(folderAssignItemId);
+    });
+    queueOfflineMutation('folder_assignments',{itemId:folderAssignItemId,folderIds:selected});
+    $('#folderAssignDialog').close();renderFolderChips();renderLibrary();return;
+  }
   for(const folder of folders){
     const has=(folderMembership.get(folder.id)||new Set()).has(folderAssignItemId);
     const want=selected.includes(folder.id);
@@ -678,52 +694,53 @@ async function saveFolderAssignments(){if(!requireOnline('Changing folders needs
     if(!want&&has)await sb.from('collection_folder_items').delete().eq('folder_id',folder.id).eq('collection_item_id',folderAssignItemId);
   }
   $('#folderAssignDialog').close();
-  await loadFolders();renderLibrary();toast('Folders updated');
+  await loadFolders();saveOfflineSnapshot();renderLibrary();toast('Folders updated');
 }
 function openManualCard(){
-  $('#manualCardMessage').textContent='';
+  $('#manualCardMessage').textContent='';$('#manualCardMessage').classList.remove('error');
   $('#manualName').value='';$('#manualSetName').value='';$('#manualLocalId').value='';
   $('#manualVariant').value='Normal';$('#manualCondition').value='Near Mint';$('#manualLanguage').value='English';
   $('#manualQuantity').value='1';$('#manualCurrentValue').value='';$('#manualPricePaid').value='';$('#manualImageUrl').value='';
+  $('#manualPurchaseDate').value='';$('#manualCardState').value='raw';$('#manualGradingCompany').value='';$('#manualGrade').value='';$('#manualCertNumber').value='';
   populateManualFolderSelect();
   $('#manualCardDialog').showModal();
 }
-async function saveManualCard(){if(!requireOnline('Adding cards needs an internet connection.'))return;
+async function saveManualCard(){
   const name=$('#manualName').value.trim();
   if(!name){$('#manualCardMessage').textContent='Card name is required.';$('#manualCardMessage').classList.add('error');return;}
   const qty=Math.max(1,parseInt($('#manualQuantity').value||'1',10));
-  const now=new Date().toISOString();
+  const now=new Date().toISOString(),id=crypto.randomUUID();
   const obj={
-    game:$('#manualGame').value,
-    cardId:'manual:'+crypto.randomUUID(),
-    name,
-    localId:$('#manualLocalId').value.trim(),
-    setId:'',
-    setName:$('#manualSetName').value.trim(),
-    rarity:'',
-    variant:$('#manualVariant').value.trim()||'Normal',
-    condition:$('#manualCondition').value,
-    language:$('#manualLanguage').value.trim()||'English',
-    quantity:qty,
-    image:$('#manualImageUrl').value.trim(),
+    id,game:$('#manualGame').value,cardId:'manual:'+crypto.randomUUID(),name,
+    localId:$('#manualLocalId').value.trim(),setId:'',setName:$('#manualSetName').value.trim(),rarity:'',
+    variant:$('#manualVariant').value.trim()||'Normal',condition:$('#manualCondition').value,
+    language:$('#manualLanguage').value.trim()||'English',quantity:qty,image:$('#manualImageUrl').value.trim(),
     price:$('#manualCurrentValue').value===''?null:Number($('#manualCurrentValue').value),
     pricePaid:$('#manualPricePaid').value===''?null:Number($('#manualPricePaid').value),
-    priceCurrency:'USD',
-    priceSource:'Manual',
-    priceUpdatedAt:now,
-    entrySource:'manual',
-    notes:'',
-    addedAt:now
+    priceCurrency:'USD',priceSource:'Manual',priceUpdatedAt:now,entrySource:'manual',
+    cardState:$('#manualCardState').value,gradingCompany:$('#manualGradingCompany').value.trim(),
+    grade:$('#manualGrade').value.trim(),certNumber:$('#manualCertNumber').value.trim(),
+    purchaseDate:$('#manualPurchaseDate').value||'',notes:'',addedAt:now,updatedAt:now
   };
-  const {data,error}=await sb.from('collection_items').insert({...toRow(obj),added_at:now}).select().single();
-  if(error){$('#manualCardMessage').textContent=error.message;$('#manualCardMessage').classList.add('error');return;}
   const folderId=$('#manualFolder').value;
+  if(offlineMode||!navigator.onLine){
+    items.unshift(obj);
+    if(folderId){
+      if(!folderMembership.has(folderId))folderMembership.set(folderId,new Set());
+      folderMembership.get(folderId).add(id);
+    }
+    queueOfflineMutation('collection_insert',{id,...toRow(obj),added_at:now,updated_at:now});
+    if(folderId)queueOfflineMutation('folder_assignments',{itemId:id,folderIds:[folderId]});
+    $('#manualCardDialog').close();renderDashboard();renderLibrary();haptic();toast(name+' added offline');return;
+  }
+  const {data,error}=await sb.from('collection_items').insert({id,...toRow(obj),added_at:now,updated_at:now}).select().single();
+  if(error){$('#manualCardMessage').textContent=error.message;$('#manualCardMessage').classList.add('error');return;}
   if(folderId)await sb.from('collection_folder_items').insert({folder_id:folderId,collection_item_id:data.id});
   $('#manualCardDialog').close();
-  await loadCollection();await loadFolders();renderDashboard();renderLibrary();toast(name+' added');
+  await loadCollection();await loadFolders();saveOfflineSnapshot();renderDashboard();renderLibrary();haptic();toast(name+' added');
 }
 
-function fromRow(r){return {id:r.id,game:r.game,cardId:r.card_id,name:r.name,localId:r.local_id,setId:r.set_id,setName:r.set_name,rarity:r.rarity,variant:r.variant,condition:r.condition,language:r.language,quantity:r.quantity,image:r.image_url,price:r.price==null?null:Number(r.price),pricePaid:r.price_paid==null?null:Number(r.price_paid),priceCurrency:r.price_currency,priceSource:r.price_source,priceUpdatedAt:r.price_updated_at,entrySource:r.entry_source||'provider',cardState:r.card_state||'raw',gradingCompany:r.grading_company||'',grade:r.grade||'',certNumber:r.cert_number||'',purchaseDate:r.purchase_date||'',notes:r.notes||'',addedAt:r.added_at,updatedAt:r.updated_at};}
+function fromRowfunction fromRow(r){return {id:r.id,game:r.game,cardId:r.card_id,name:r.name,localId:r.local_id,setId:r.set_id,setName:r.set_name,rarity:r.rarity,variant:r.variant,condition:r.condition,language:r.language,quantity:r.quantity,image:r.image_url,price:r.price==null?null:Number(r.price),pricePaid:r.price_paid==null?null:Number(r.price_paid),priceCurrency:r.price_currency,priceSource:r.price_source,priceUpdatedAt:r.price_updated_at,entrySource:r.entry_source||'provider',cardState:r.card_state||'raw',gradingCompany:r.grading_company||'',grade:r.grade||'',certNumber:r.cert_number||'',purchaseDate:r.purchase_date||'',notes:r.notes||'',addedAt:r.added_at,updatedAt:r.updated_at};}
 function toRow(x){return {user_id:currentUser.id,game:x.game,card_id:x.cardId,name:x.name,local_id:x.localId,set_id:x.setId,set_name:x.setName,rarity:x.rarity,variant:x.variant,condition:x.condition,language:x.language,quantity:x.quantity,image_url:x.image,price:x.price,price_paid:x.pricePaid,price_currency:x.priceCurrency,price_source:x.priceSource,price_updated_at:x.priceUpdatedAt,entry_source:x.entrySource||'provider',card_state:x.cardState||'raw',grading_company:x.gradingCompany||null,grade:x.grade||null,cert_number:x.certNumber||null,purchase_date:x.purchaseDate||null,notes:x.notes||'',updated_at:new Date().toISOString()};}
 async function signIn(e){
   e.preventDefault();
