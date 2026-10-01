@@ -110,7 +110,13 @@
 <div id="appShell" class="hidden">
 <header class="topbar">
   <div class="brand"><div class="brand-mark">DV</div><div><div class="brand-name">DeckVault</div><div class="brand-sub">Card Collection Scanner</div></div></div>
-  <div class="topactions"><span id="accountChip" class="accountchip"></span><button id="installBtn" class="ghost hidden">Install</button></div>
+  <div class="topactions">
+  <span id="lastSyncChip" class="syncchip">Not synced</span>
+  <button id="universalSearchBtn" class="iconbtn" type="button" aria-label="Search DeckVault">⌕</button>
+  <button id="notificationBtn" class="iconbtn notificationbutton" type="button" aria-label="Notifications">♢<span id="notificationBadge" class="notificationbadge hidden">0</span></button>
+  <span id="accountChip" class="accountchip"></span>
+  <button id="installBtn" class="ghost hidden">Install</button>
+</div>
 </header>
 <div id="offlineBanner" class="offlinebanner hidden"><strong>Offline Mode</strong><span>Showing your last saved library and prices.</span><small id="offlineSavedAt"></small></div>
 <div id="startupError" class="startuperror hidden"><strong>DeckVault had trouble starting.</strong><span id="startupErrorText"></span><button id="startupReloadBtn" type="button">Reload app</button></div>
@@ -127,6 +133,16 @@
       <div><span>Unique entries</span><strong id="uniqueCards">0</strong></div>
       <div><span>Duplicates</span><strong id="duplicates">0</strong></div>
       <div><span>Sets</span><strong id="setCount">0</strong></div>
+    </div>
+    <div class="analyticsgrid">
+      <div class="analyticscard"><span>Total spent</span><strong id="analyticsSpend">$0.00</strong><small>Recorded cost basis</small></div>
+      <div class="analyticscard"><span>Unrealized gain / loss</span><strong id="analyticsGain">$0.00</strong><small id="analyticsGainPct">0.0%</small></div>
+      <div class="analyticscard"><span>Highest-value card</span><strong id="analyticsTopCard">—</strong><small id="analyticsTopCardValue">$0.00</small></div>
+      <div class="analyticscard"><span>Watchlist</span><strong id="analyticsWatchCount">0</strong><small>Cards being tracked</small></div>
+    </div>
+    <div class="analyticsdetails">
+      <div class="panel"><div class="eyebrow">FOLDERS</div><h3>Value by folder</h3><div id="analyticsFolders" class="analyticslist"></div></div>
+      <div class="panel"><div class="eyebrow">MASTER SETS</div><h3>Set completion</h3><div id="analyticsSets" class="analyticslist"><div class="empty compact">Open Dashboard online to load set completion.</div></div></div>
     </div>
     <h2>Quick actions</h2>
     <div class="actions">
@@ -374,6 +390,11 @@
         <div id="profileDetailsForm" class="detailform"></div>
         <button id="saveProfileDetailsBtn" class="secondary wide" type="button">Save profile details</button>
       </div>
+      <div class="panel">
+        <div class="pagehead"><div><div class="eyebrow">SAFETY</div><h3>Blocked collectors</h3></div><button id="refreshBlocksBtn" class="ghost" type="button">Refresh</button></div>
+        <p class="muted">Blocked collectors cannot start or send private messages to you and are hidden from your marketplace discovery.</p>
+        <div id="blockedUsersList" class="liststack"></div>
+      </div>
     </div>
 
     <div class="settingspane" data-settings-pane="marketplace">
@@ -443,6 +464,16 @@
           <label class="filebtn">Restore master backup<input id="importJson" type="file" accept=".json,application/json"></label>
         </div>
       </div>
+      <div class="panel">
+        <div class="eyebrow">IMPORT CENTER</div>
+        <h3>Import another collection</h3>
+        <p class="muted">DeckVault can detect common Collectr and TCGplayer CSV columns, or import a generic card CSV.</p>
+        <div class="form">
+          <label>Source format<select id="importCollectionFormat"><option value="auto">Auto detect</option><option value="collectr">Collectr</option><option value="tcgplayer">TCGplayer</option><option value="generic">Generic CSV</option></select></label>
+          <label class="filebtn">Choose CSV<input id="importCollectionCsv" type="file" accept=".csv,text/csv"></label>
+        </div>
+        <div id="importCollectionStatus" class="status"></div>
+      </div>
     </div>
 
     <div class="settingspane" data-settings-pane="diagnostics">
@@ -458,6 +489,11 @@
           <button id="copyDiagnostics" class="secondary" type="button">Copy diagnostic bundle</button>
           <button id="exportDiagnostics" class="secondary" type="button">Download diagnostics (.json)</button>
         </div>
+      </div>
+      <div class="panel">
+        <div class="pagehead"><div><div class="eyebrow">OFFLINE SYNC</div><h3>Queued changes</h3></div><button id="syncOfflineNowBtn" class="ghost" type="button">Sync now</button></div>
+        <div id="offlineQueueStatus" class="status">No queued changes.</div>
+        <button id="viewOfflineConflictsBtn" class="secondary" type="button">View sync conflicts</button>
       </div>
     </div>
 
@@ -485,6 +521,9 @@
 
         <div class="pagehead adminsection"><div><div class="eyebrow">MODERATION</div><h3>User management</h3></div><button id="refreshUsers" class="ghost">Refresh</button></div>
         <div id="userManagement" class="liststack"></div>
+
+        <div class="pagehead adminsection"><div><div class="eyebrow">REPORTS</div><h3>Community reports</h3></div><button id="refreshReports" class="ghost" type="button">Refresh</button></div>
+        <div id="reportQueue" class="liststack"></div>
 
         <div class="pagehead adminsection"><div><div class="eyebrow">AUDIT</div><h3>Recent admin actions</h3></div></div>
         <div id="adminAuditLog" class="liststack"></div>
@@ -564,6 +603,11 @@
       <label>Quantity<input id="manualQuantity" type="number" min="1" value="1"></label>
       <label>Current value each<input id="manualCurrentValue" type="number" min="0" step="0.01" placeholder="0.00"></label>
       <label>Price paid each<input id="manualPricePaid" type="number" min="0" step="0.01" placeholder="0.00"></label>
+      <label>Purchase date<input id="manualPurchaseDate" type="date"></label>
+      <label>Card state<select id="manualCardState"><option value="raw">Raw</option><option value="graded">Graded</option></select></label>
+      <label>Grading company<select id="manualGradingCompany"><option value="">—</option><option>PSA</option><option>CGC</option><option>BGS</option><option>TAG</option><option>SGC</option><option>Other</option></select></label>
+      <label>Grade<input id="manualGrade" maxlength="20" placeholder="e.g. 10"></label>
+      <label>Certification #<input id="manualCertNumber" maxlength="80" placeholder="Optional"></label>
       <label class="fullfield">Card image URL <span class="muted">optional</span><input id="manualImageUrl" type="url" placeholder="https://…"></label>
       <label class="fullfield">Add to folder<select id="manualFolder"><option value="">Main Library only</option></select></label>
     </div>
@@ -611,6 +655,57 @@
   <form method="dialog">
     <button class="close" value="cancel">×</button>
     <div id="libraryCardDetails"></div>
+  </form>
+</dialog>
+
+<dialog id="notificationsDialog">
+  <form method="dialog">
+    <button class="close" value="cancel">×</button>
+    <div class="pagehead"><div><div class="eyebrow">ACTIVITY</div><h2>Notifications</h2></div><button id="markAllNotificationsRead" class="ghost" type="button">Mark all read</button></div>
+    <div id="notificationsList" class="notificationlist"></div>
+  </form>
+</dialog>
+
+<dialog id="universalSearchDialog">
+  <form method="dialog">
+    <button class="close" value="cancel">×</button>
+    <div class="eyebrow">SEARCH DECKVAULT</div><h2>Universal search</h2>
+    <input id="universalSearchInput" class="universalinput" autocomplete="off" placeholder="Cards, sets, collectors…">
+    <div id="universalSearchResults" class="universalsearchresults"></div>
+  </form>
+</dialog>
+
+<dialog id="reportDialog">
+  <form method="dialog">
+    <button class="close" value="cancel">×</button>
+    <div class="eyebrow">SAFETY</div><h2>Report</h2>
+    <div id="reportTargetLabel" class="muted"></div>
+    <div class="form">
+      <label>Reason<select id="reportCategory"><option value="spam">Spam</option><option value="harassment">Harassment</option><option value="fraud">Fraud / scam</option><option value="counterfeit">Counterfeit concern</option><option value="inappropriate">Inappropriate content</option><option value="other">Other</option></select></label>
+      <label>Details<textarea id="reportReason" maxlength="2000" placeholder="Tell the DeckVault admins what happened…"></textarea></label>
+      <button id="submitReportBtn" class="dangerbtn" type="button">Submit report</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="copiesDialog">
+  <form method="dialog">
+    <button class="close" value="cancel">×</button>
+    <div class="pagehead"><div><div class="eyebrow">INDIVIDUAL COPIES</div><h2 id="copiesDialogTitle">Manage copies</h2></div><button id="addCopyBtn" class="secondary" type="button">＋ Copy</button></div>
+    <div id="copiesList" class="copieslist"></div>
+  </form>
+</dialog>
+
+<dialog id="imageZoomDialog" class="imagezoomdialog">
+  <form method="dialog"><button class="close" value="cancel">×</button><img id="imageZoomTarget" alt="Card image zoom"></form>
+</dialog>
+
+<dialog id="offlineConflictsDialog">
+  <form method="dialog">
+    <button class="close" value="cancel">×</button>
+    <div class="eyebrow">OFFLINE SYNC</div><h2>Sync conflicts</h2>
+    <p class="muted">DeckVault did not overwrite a newer server change. Review these items and make the change again if needed.</p>
+    <div id="offlineConflictsList" class="liststack"></div>
   </form>
 </dialog>
 
