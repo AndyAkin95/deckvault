@@ -356,6 +356,7 @@
         <option value="marketplace">Marketplace & Trade</option>
         <option value="lists">Custom Lists</option>
         <option value="valuation">Valuation</option>
+        <option value="favorites">Favorites & Watchlist</option>
         <option value="backup">Backup & Portability</option>
         <option value="diagnostics">Diagnostics</option>
         <option value="data">Collection Data</option>
@@ -453,7 +454,18 @@
       </div>
     </div>
 
-    <div class="settingspane" data-settings-pane="backup">
+    <div class="settingspane" data-settings-pane="favorites">
+      <div class="panel">
+        <div class="pagehead"><div><div class="eyebrow">SAVED</div><h3>Favorites & Watchlist</h3></div><button id="refreshSavedItemsBtn" class="ghost" type="button">Refresh</button></div>
+        <p class="muted">Watched cards can generate price alerts. Favorite sets and marketplace listings are saved here for quick reference.</p>
+        <div class="savedsections">
+          <div><h4>Watched cards</h4><div id="savedWatchlist" class="liststack"></div></div>
+          <div><h4>Favorite sets & listings</h4><div id="savedFavorites" class="liststack"></div></div>
+        </div>
+      </div>
+    </div>
+
+        <div class="settingspane" data-settings-pane="backup">
       <div class="panel">
         <h3>Backup & portability</h3>
         <p>Your master collection is stored in your authenticated DeckVault account. Export backups whenever you want.</p>
@@ -515,6 +527,16 @@
           <button id="setupAdminMfaBtn" class="secondary" type="button">Set up 6-digit authenticator</button>
         </div>
         <p class="muted">Approvals, denials, bans, and unbans require a confirmation window and a fresh 6-digit authenticator code.</p>
+        <div class="adminnoticecomposer">
+          <div class="eyebrow">ACCOUNT NOTICES</div>
+          <h3>Send notification</h3>
+          <div class="form">
+            <label>Recipient username <span class="muted">leave blank for all profiles</span><input id="adminNoticeTarget" maxlength="24" placeholder="username"></label>
+            <label>Title<input id="adminNoticeTitle" maxlength="120" placeholder="DeckVault notice"></label>
+            <label>Message<textarea id="adminNoticeBody" maxlength="1000" placeholder="Notification message…"></textarea></label>
+            <button id="sendAdminNoticeBtn" class="secondary" type="button">Send notification</button>
+          </div>
+        </div>
 
         <div class="pagehead adminsection"><div><div class="eyebrow">ACCOUNT ACCESS</div><h3>Pending applications</h3></div><button id="refreshApplications" class="ghost">Refresh</button></div>
         <div id="applicationQueue" class="liststack"></div>
