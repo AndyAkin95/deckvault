@@ -201,6 +201,23 @@
         </div>
       </div>
     </div>
+    <div id="scanChoices" class="scanchoices hidden">
+      <div class="eyebrow">POSSIBLE MATCHES</div>
+      <h3>Choose the matching card</h3>
+      <p class="muted">Several sets can share a card number. Tap the correct image.</p>
+      <div id="scanChoicesGrid" class="scanchoicesgrid"></div>
+    </div>
+    <div class="scanmanual panel">
+      <details id="scanManualDetails">
+        <summary>Can't find your card? Enter its number or name</summary>
+        <div class="scanmanualfields">
+          <label>Printed number <span class="muted">optional</span><input id="scanManualNumber" autocomplete="off" placeholder="161/197 or TG05/TG30"></label>
+          <label>Card name or set <span class="muted">optional</span><input id="scanManualName" autocomplete="off" placeholder="e.g. Charizard or Obsidian Flames"></label>
+          <button id="scanManualSearch" class="secondary" type="button">Find matching cards</button>
+        </div>
+      </details>
+      <small id="scanReadout" class="muted" aria-live="polite"></small>
+    </div>
     <div class="notice"><strong>Active Scan Beta:</strong> glare, sleeves, older layouts and unusual promo numbering can reduce OCR accuracy. Manual capture and lookup remain available as fallback.</div>
     <button class="wide secondary" data-go="lookup">Use manual lookup</button>
   </section>
