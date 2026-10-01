@@ -886,7 +886,17 @@ async function init(){
     }
   });
   const {data:{session}}=await sb.auth.getSession();if(session?.user)await showApp(session.user);else showAuth();
-  if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(console.warn);
+  if('serviceWorker' in navigator){
+    let swReloaded=false;
+    navigator.serviceWorker.addEventListener('controllerchange',()=>{
+      if(swReloaded)return;
+      swReloaded=true;
+      location.reload();
+    });
+    navigator.serviceWorker.register('./sw.js?v=20',{updateViaCache:'none'})
+      .then(reg=>reg.update())
+      .catch(console.warn);
+  }
 }
 document.addEventListener('DOMContentLoaded',()=>init().catch(showStartupError));
 window.addEventListener('pagehide',()=>{if(stream)stream.getTracks().forEach(t=>t.stop());});
