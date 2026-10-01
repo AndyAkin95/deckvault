@@ -160,3 +160,7 @@ textarea{font:inherit;resize:vertical;min-height:86px}
   .bottomnav .scan{width:58px;height:58px;margin-top:-18px;font-size:1.45rem}
   .bottomnav .scan small{font-size:.58rem}
 }
+
+.startuperror{position:fixed;left:12px;right:12px;top:12px;z-index:9999;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:11px 12px;border:1px solid #ef4444;background:#2a1115;color:#fee2e2;border-radius:13px;box-shadow:0 14px 40px rgba(0,0,0,.35)}
+.startuperror strong{font-size:.8rem}.startuperror span{font-size:.72rem;color:#fecaca;overflow-wrap:anywhere}.startuperror button{border:1px solid #f87171;background:#7f1d1d;color:#fff;border-radius:9px;padding:7px 10px;font-weight:850}
+@media(max-width:560px){.startuperror{grid-template-columns:1fr}.startuperror button{width:100%}}
