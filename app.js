@@ -511,7 +511,7 @@ function openFolderAssignments(item){
 }
 async function saveFolderAssignments(){if(!requireOnline('Changing folders needs an internet connection.'))return;
   if(!folderAssignItemId)return;
-  const selected=$('#folderAssignOptions input:checked').map(x=>x.value);
+  const selected=Array.from(document.querySelectorAll('#folderAssignOptions input:checked')).map(x=>x.value);
   for(const folder of folders){
     const has=(folderMembership.get(folder.id)||new Set()).has(folderAssignItemId);
     const want=selected.includes(folder.id);
