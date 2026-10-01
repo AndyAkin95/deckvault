@@ -29,7 +29,10 @@ function staticAudit() {
     assert(!nativeBad.length, name+' uses querySelector as a collection: '+nativeBad.join(', '));
 
     const tripleDollar=[...src.matchAll(/\$\$\$\(/g)].map(m=>m.index);
-    assert(!tripleDollar.length, name+' contains accidental $$() selector helper usage at offsets '+tripleDollar.join(', '));
+    assert(!tripleDollar.length, name+' contains accidental $() selector helper usage at offsets '+tripleDollar.join(', '));
+
+    const dollarDocument=[...src.matchAll(/\$document\b/g)].map(m=>m.index);
+    assert(!dollarDocument.length, name+' contains accidental $document usage at offsets '+dollarDocument.join(', '));
   }
 
   const appInitStart=app.indexOf('async function init(){');
