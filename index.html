@@ -103,6 +103,7 @@
       <button data-go="scanner">◎<span>Scan cards<small>Use phone camera</small></span></button>
       <button data-go="lookup">⌕<span>Find a card<small>Pokémon database</small></span></button>
       <button data-go="library">▦<span>Library<small>Browse collection</small></span></button>
+      <button data-go="marketplace">⇄<span>Trade / Sell<small>Find cards from collectors</small></span></button>
       <button data-go="community">♢<span>Community<small>Profiles & public lists</small></span></button>
       <button data-go="settings">⇩<span>Backup<small>Export your data</small></span></button>
     </div>
@@ -145,6 +146,21 @@
     <div id="libraryList" class="library"></div>
   </section>
 
+  <section id="marketplace" class="view">
+    <div class="pagehead"><div><div class="eyebrow">MARKETPLACE</div><h1>Trade / Sell</h1></div></div>
+    <div class="panel form">
+      <label>Card game<select id="marketGame"><option value="pokemon">Pokémon TCG</option></select></label>
+      <label>Card name<input id="marketSearchName" placeholder="e.g. Umbreon ex"></label>
+      <label>Collector number <span class="muted">optional</span><input id="marketSearchNumber" placeholder="e.g. 161"></label>
+      <button id="marketSearchBtn" class="primary" type="button">Find card</button>
+    </div>
+    <div id="marketSearchStatus" class="status"></div>
+    <div id="marketCardResults" class="results"></div>
+    <div id="marketOfferHeading" class="hidden"><h2>Available from collectors</h2></div>
+    <div id="marketOffers" class="offergrid"></div>
+    <div class="notice"><strong>Marketplace preview:</strong> DeckVault currently helps collectors discover cards and each other. Payments, shipping, offers and in-app messaging are not handled by DeckVault yet.</div>
+  </section>
+
   <section id="community" class="view">
     <div class="pagehead"><div><div class="eyebrow">COMMUNITY</div><h1>Collector profiles</h1></div></div>
     <div class="panel form">
@@ -163,6 +179,20 @@
       <button id="signOutBtn" class="secondary">Sign out</button>
     </div>
     <div class="panel form">
+      <h3>Trade / Sell status</h3>
+      <label>Marketplace availability
+        <select id="marketplaceMode">
+          <option value="off">Not open to trades or sales</option>
+          <option value="trade">Trade only</option>
+          <option value="sell">Sell / cash only</option>
+          <option value="both">Trade + Sell</option>
+        </select>
+      </label>
+      <label>Marketplace note<textarea id="marketplaceNote" maxlength="300" placeholder="What you collect, trade preferences, shipping notes, etc."></textarea></label>
+      <button id="saveMarketplaceBtn" class="primary" type="button">Save marketplace status</button>
+      <p class="muted">Turning marketplace availability off hides your permanent Trade / Sell list without deleting its contents.</p>
+    </div>
+    <div class="panel form">
       <h3>My profile</h3>
       <label>Username<input id="profileUsername" minlength="3" maxlength="24"></label>
       <label>Display name<input id="profileDisplayName" maxlength="60"></label>
@@ -177,8 +207,20 @@
       <button id="saveProfileDetailsBtn" class="secondary wide" type="button">Save profile details</button>
     </div>
     <div class="panel">
-      <h3>My lists</h3>
-      <p class="muted">Public lists appear on your profile. Private lists are visible only to you.</p>
+      <div class="pagehead"><div><div class="eyebrow">PERMANENT LIST</div><h3>Trade / Sell list</h3></div><span id="tradeListStatus" class="pill">Hidden</span></div>
+      <p class="muted">This list cannot be deleted. Add cards from your collection that you are willing to trade or sell.</p>
+      <div class="tradeaddgrid">
+        <label>Card<select id="tradeCardSelect"><option value="">Choose a card…</option></select></label>
+        <label>Offer quantity<input id="tradeOfferQuantity" type="number" min="1" value="1"></label>
+        <label>Cash asking price <span class="muted">optional</span><input id="tradeAskingPrice" type="number" min="0" step="0.01" placeholder="0.00"></label>
+        <label>Offer note <span class="muted">optional</span><input id="tradeOfferNote" maxlength="160" placeholder="Trade priority, condition note…"></label>
+        <button id="addTradeCardBtn" class="secondary" type="button">Add / update listing</button>
+      </div>
+      <div id="tradeListItems" class="liststack"></div>
+    </div>
+    <div class="panel">
+      <h3>My custom lists</h3>
+      <p class="muted">Public custom lists appear on your profile. Private lists are visible only to you.</p>
       <div class="form">
         <label>List name<input id="newListName" maxlength="80" placeholder="Trade Binder, Favorites, Master Set…"></label>
         <label>Visibility<select id="newListVisibility"><option value="private">Private</option><option value="public">Public</option></select></label>
@@ -216,7 +258,7 @@
       <p class="muted">This deletes only the signed-in account's DeckVault collection.</p>
       <button id="clearData" class="dangerbtn">Clear my collection</button>
     </div>
-    <div class="panel"><strong>DeckVault v0.3</strong><p class="muted">Admin-approved accounts, collector profiles, public/private lists, and cloud-synced libraries.</p></div>
+    <div class="panel"><strong>DeckVault v0.4</strong><p class="muted">Admin-approved accounts, collector profiles, public/private lists, and Trade / Sell marketplace discovery.</p></div>
   </section>
 </main>
 
@@ -225,6 +267,7 @@
   <button data-go="lookup">⌕<small>Lookup</small></button>
   <button data-go="scanner" class="scan">◎<small>Scan</small></button>
   <button data-go="library">▦<small>Library</small></button>
+  <button data-go="marketplace">⇄<small>Trade</small></button>
   <button data-go="settings">⚙<small>Settings</small></button>
 </nav>
 </div>
