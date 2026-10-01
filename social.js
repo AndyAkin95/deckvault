@@ -24,9 +24,112 @@ let tradeListId=null;
 let marketplaceFeedRows=[];
 let mfaEnrollmentFactorId=null;
 let pendingAdminAction=null;
-let communityChannel=null, privateMessageChannel=null, activeForumThreadId=null;
-let activePrivateConversationId=null,activePrivateOtherUserId=null;
+let communityChannel=null, privateMessageChannel=null, notificationChannel=null, activeForumThreadId=null;
+let activePrivateConversationId=null,activePrivateOtherUserId=null,pendingPrivateReference=null,pendingReportTarget=null;
+let blockedUserIds=new Set();
 let masterSetListCache=null,masterSetDetailCache=new Map();
+
+
+async function refreshBlockedUsers(){
+  if(!currentUser)return;
+  const {data,error}=await sb.from('user_blocks').select('blocked_id').eq('blocker_id',currentUser.id);
+  if(error){console.error(error);return;}
+  blockedUserIds=new Set((data||[]).map(x=>x.blocked_id));
+}
+async function loadBlockedUsersSettings(){
+  const box=$('#blockedUsersList');if(!box)return;
+  await refreshBlockedUsers();box.innerHTML='';
+  if(!blockedUserIds.size){box.innerHTML='<div class="empty">No blocked collectors.</div>';return;}
+  const {data}=await sb.from('profiles').select('id,username,display_name,avatar_url').in('id',[...blockedUserIds]);
+  (data||[]).forEach(p=>{
+    const e=document.createElement('div');e.className='applicationrow';
+    e.innerHTML='<div class="useridentity">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+'<div><strong>@'+esc(p.username||'collector')+'</strong><small>'+esc(p.display_name||'')+'</small></div></div><button class="secondary" type="button">Unblock</button>';
+    e.querySelector('button').onclick=()=>unblockUser(p.id);
+    box.appendChild(e);
+  });
+}
+async function blockUser(userId){
+  if(!userId||userId===currentUser.id)return;
+  if(!confirm('Block this collector? They will not be able to message you, and their marketplace listings will be hidden.'))return;
+  const {error}=await sb.from('user_blocks').insert({blocker_id:currentUser.id,blocked_id:userId});
+  if(error&&error.code!=='23505')return toast('Could not block user');
+  blockedUserIds.add(userId);await loadBlockedUsersSettings();loadPrivateInbox().catch(()=>{});toast('Collector blocked');
+}
+async function unblockUser(userId){
+  const {error}=await sb.from('user_blocks').delete().eq('blocker_id',currentUser.id).eq('blocked_id',userId);
+  if(error)return toast('Could not unblock user');
+  blockedUserIds.delete(userId);await loadBlockedUsersSettings();toast('Collector unblocked');
+}
+function openReport(target){
+  pendingReportTarget=target;$('#reportTargetLabel').textContent=target.label||'Report DeckVault content';$('#reportReason').value='';$('#reportCategory').value=target.category||'other';$('#reportDialog').showModal();
+}
+async function submitReport(){
+  if(!pendingReportTarget)return;
+  const reason=$('#reportReason').value.trim();if(reason.length<3)return toast('Add a little more detail');
+  const {error}=await sb.from('user_reports').insert({
+    reporter_user_id:currentUser.id,target_user_id:pendingReportTarget.userId||null,
+    target_type:pendingReportTarget.type,target_id:pendingReportTarget.id?String(pendingReportTarget.id):null,
+    category:$('#reportCategory').value,reason
+  });
+  if(error){console.error(error);return toast('Could not submit report');}
+  $('#reportDialog').close();pendingReportTarget=null;toast('Report submitted');
+}
+function updateNotificationBadge(count){
+  const b=$('#notificationBadge');if(!b)return;const n=Math.max(0,Number(count||0));
+  b.textContent=n>99?'99+':String(n);b.classList.toggle('hidden',n===0);
+}
+async function loadNotifications(){
+  if(!currentUser)return;
+  const {data,error}=await sb.from('notifications').select('*').eq('user_id',currentUser.id).order('created_at',{ascending:false}).limit(100);
+  const box=$('#notificationsList');if(!box)return;box.innerHTML='';
+  if(error){console.error(error);box.innerHTML='<div class="empty">Could not load notifications.</div>';return;}
+  const rows=data||[];updateNotificationBadge(rows.filter(n=>!n.read_at).length);
+  if(!rows.length){box.innerHTML='<div class="empty">No notifications yet.</div>';return;}
+  rows.forEach(n=>{
+    const b=document.createElement('button');b.type='button';b.className='notificationrow'+(n.read_at?'':' unread');
+    b.innerHTML='<div><strong>'+esc(n.title)+'</strong><p>'+esc(n.body||'')+'</p><small>'+new Date(n.created_at).toLocaleString()+'</small></div><span>›</span>';
+    b.onclick=()=>openNotification(n);box.appendChild(b);
+  });
+}
+async function openNotification(n){
+  if(!n.read_at)await sb.from('notifications').update({read_at:new Date().toISOString()}).eq('id',n.id);
+  $('#notificationsDialog').close();loadNotifications().catch(()=>{});
+  if(n.reference_type==='private_conversation'){
+    const {data:c}=await sb.from('private_conversations').select('id,user_one,user_two').eq('id',n.reference_id).maybeSingle();
+    if(c){go('community');switchCommunityTab('messages');const other=c.user_one===currentUser.id?c.user_two:c.user_one;await openPrivateConversation(c.id,other);}
+  }else if(n.reference_type==='forum_thread'){
+    go('community');switchCommunityTab('forums');openForumThread(n.reference_id);
+  }else if(n.reference_type==='card'){
+    const card=items.find(x=>x.cardId===n.reference_id);if(card){go('library');openLibraryCardDetails(card);}
+  }
+}
+async function markAllNotificationsRead(){
+  const {error}=await sb.from('notifications').update({read_at:new Date().toISOString()}).eq('user_id',currentUser.id).is('read_at',null);
+  if(error)return toast('Could not update notifications');loadNotifications();
+}
+function startNotificationRealtime(){
+  if(notificationChannel||!currentUser)return;
+  notificationChannel=sb.channel('deckvault-notifications-'+currentUser.id)
+    .on('postgres_changes',{event:'INSERT',schema:'public',table:'notifications',filter:'user_id=eq.'+currentUser.id},()=>loadNotifications())
+    .subscribe();
+}
+async function searchSocialUniversal(q){
+  const nodes=[];
+  try{
+    const safe=q.replace(/[%_]/g,'');
+    const [{data:profiles},{data:market}]=await Promise.all([
+      sb.from('profiles').select('id,username,display_name').ilike('username','%'+safe+'%').limit(6),
+      sb.rpc('list_marketplace_cards',{p_game:'pokemon',p_search:q,p_limit:6})
+    ]);
+    const visibleProfiles=(profiles||[]).filter(p=>p.id!==currentUser.id&&!blockedUserIds.has(p.id));
+    if(visibleProfiles.length){const h=document.createElement('h3');h.textContent='Collectors';nodes.push(h);}
+    visibleProfiles.forEach(p=>{const b=document.createElement('button');b.className='globalsearchrow';b.innerHTML='<strong>@'+esc(p.username||'collector')+'</strong><span>'+esc(p.display_name||'')+'</span>';b.onclick=()=>{$('#universalSearchDialog').close();go('community');switchCommunityTab('profiles');viewProfile(p.id);};nodes.push(b);});
+    if(market?.length){const h=document.createElement('h3');h.textContent='Marketplace';nodes.push(h);}
+    (market||[]).forEach(c=>{const b=document.createElement('button');b.className='globalsearchrow';b.innerHTML='<strong>'+esc(c.card_name)+'</strong><span>'+esc(c.set_name||'')+' • '+Number(c.seller_count||0)+' collector(s)</span>';b.onclick=()=>{$('#universalSearchDialog').close();go('marketplace');findTradeOffers({id:c.card_id,name:c.card_name,setName:c.set_name,localId:c.local_id,image:c.image_url,sellerCount:Number(c.seller_count||0)});};nodes.push(b);});
+  }catch(e){console.error(e);}
+  return nodes;
+}
+window.searchSocialUniversal=searchSocialUniversal;
 
 function marketplaceLabel(mode){
   return ({off:'Not trading',trade:'Trade only',sell:'Sell / cash only',both:'Trade + Sell'})[mode]||'Not trading';
