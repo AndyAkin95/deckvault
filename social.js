@@ -189,11 +189,12 @@ async function refreshSocialState(){
     $('#onboardingGate').classList.add('hidden');
     $('#appShell').classList.remove('hidden');
   }
+  await refreshBlockedUsers();
   await loadProfileSettings();
   await loadMyLists();
   await loadTradeList();
-  startPrivateMessageRealtime();
-  loadPrivateInbox().catch(console.error);
+  startPrivateMessageRealtime();startNotificationRealtime();
+  loadPrivateInbox().catch(console.error);loadNotifications().catch(console.error);
 }
 
 async function finishOnboarding(e){
@@ -294,8 +295,9 @@ async function searchCommunity(){
   const box=$('#communityResults');box.innerHTML='';
   $('#publicProfileView').classList.add('hidden');
   if(error){box.innerHTML='<div class="empty">Could not load profiles.</div>';return;}
-  if(!data?.length){box.innerHTML='<div class="empty">No profiles found.</div>';return;}
-  data.forEach(p=>{
+  const visible=(data||[]).filter(p=>p.id===currentUser.id||!blockedUserIds.has(p.id));
+  if(!visible.length){box.innerHTML='<div class="empty">No profiles found.</div>';return;}
+  visible.forEach(p=>{
     const e=document.createElement('button');e.className='profilecard';
     e.innerHTML=(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+'<div><strong>@'+esc(p.username)+'</strong><span>'+esc(p.display_name||'')+'</span><small>'+esc((p.bio||'').slice(0,90))+'</small></div>';
     e.onclick=()=>viewProfile(p.id);box.appendChild(e);
@@ -312,11 +314,13 @@ async function viewProfile(userId){
   const box=$('#publicProfileView');box.classList.remove('hidden');
   const d=(details||[]).filter(x=>userId===currentUser.id||x.visibility==='public');
   const marketBadge=p.marketplace_mode&&p.marketplace_mode!=='off'?'<span class="marketbadge '+esc(p.marketplace_mode)+'">'+esc(marketplaceLabel(p.marketplace_mode))+'</span>':'';
-  box.innerHTML='<div class="profilehero">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'">':'<div class="avatarfallback large">DV</div>')+'<div><div class="eyebrow">COLLECTOR PROFILE</div><h2>@'+esc(p.username||'collector')+'</h2>'+marketBadge+'<strong>'+esc(p.display_name||'')+'</strong><p>'+esc(p.bio||'')+'</p>'+(p.marketplace_mode!=='off'&&p.marketplace_note?'<p class="marketnote">'+esc(p.marketplace_note)+'</p>':'')+(userId!==currentUser.id?'<button class="primary profilemessagebtn" type="button" data-message-user="'+esc(userId)+'">Message collector</button>':'')+'</div></div>'+
+  box.innerHTML='<div class="profilehero">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'">':'<div class="avatarfallback large">DV</div>')+'<div><div class="eyebrow">COLLECTOR PROFILE</div><h2>@'+esc(p.username||'collector')+'</h2>'+marketBadge+'<strong>'+esc(p.display_name||'')+'</strong><p>'+esc(p.bio||'')+'</p>'+(p.marketplace_mode!=='off'&&p.marketplace_note?'<p class="marketnote">'+esc(p.marketplace_note)+'</p>':'')+(userId!==currentUser.id?'<div class="profilesafetyactions"><button class="primary profilemessagebtn" type="button" data-message-user="'+esc(userId)+'">Message collector</button><button class="secondary" type="button" data-block-user>'+ (blockedUserIds.has(userId)?'Unblock':'Block') +'</button><button class="ghost" type="button" data-report-user>Report</button></div>':'')+'</div></div>'+
     '<div class="publicdetails">'+d.map(x=>'<div><span>'+esc(PROFILE_FIELDS.find(f=>f[0]===x.field_key)?.[1]||x.field_key)+'</span><strong>'+esc(x.field_value)+'</strong></div>').join('')+'</div>'+
     '<div class="profilemaster"><div class="pagehead"><div><div class="eyebrow">POKÉMON CHECKLIST</div><h3>Master Sets</h3></div></div><div id="profileMasterSets"></div></div>'+
     '<h3>Public lists</h3><div id="profileLists" class="liststack"></div><div id="profileListContents"></div>';
   const messageBtn=box.querySelector('[data-message-user]');if(messageBtn)messageBtn.onclick=()=>startPrivateConversation(userId);
+  const blockBtn=box.querySelector('[data-block-user]');if(blockBtn)blockBtn.onclick=()=>blockedUserIds.has(userId)?unblockUser(userId):blockUser(userId);
+  const reportBtn=box.querySelector('[data-report-user]');if(reportBtn)reportBtn.onclick=()=>openReport({type:'profile',userId,label:'Report @'+(p.username||'collector'),category:'other'});
   const lb=$('#profileLists');
   const visible=(lists||[]).filter(l=>userId===currentUser.id||l.visibility==='public');
   if(!visible.length)lb.innerHTML='<div class="empty">This collector has no public lists.</div>';
@@ -523,7 +527,7 @@ async function findTradeOffers(card){
   $('#marketOfferHeading').classList.remove('hidden');
   const count=card.sellerCount?'<div class="muted">'+card.sellerCount+' collector'+(card.sellerCount===1?'':'s')+' currently offering this printing</div>':'';
   $('#marketOfferHeading').innerHTML='<div class="selectedmarketcard">'+(card.image?'<img src="'+esc(imageUrl(card.image))+'" alt="">':'')+'<div><div class="eyebrow">AVAILABLE FROM COLLECTORS</div><h2>'+esc(card.name)+'</h2><div class="muted">'+esc(card.setName||'')+(card.localId?' • #'+esc(card.localId):'')+'</div>'+count+'</div></div>';
-  $('#marketOffers').innerHTML='<div class="empty">Checking active Trade / Sell lists…</div>';
+  $('#marketOffers').innerHTML='<div class="skeletonline"></div><div class="skeletonline short"></div>';
   const {data,error}=await sb.rpc('search_trade_offers',{p_game:'pokemon',p_card_id:card.id});
   const box=$('#marketOffers');box.innerHTML='';
   if(error){console.error(error);box.innerHTML='<div class="empty">Could not search marketplace.</div>';return;}
@@ -536,13 +540,17 @@ async function findTradeOffers(card){
     else if(o.asking_price!=null)dealText='<div class="offerprice">'+money(o.asking_price,o.price_currency||'USD')+'</div>';
     else if(o.marketplace_mode==='sell')dealText='<div class="offerprice unsetprice">Price not set</div>';
     else dealText='<div class="offerprice tradeonly">Trade + Sell</div>';
-    e.innerHTML='<div class="offeruser">'+(o.avatar_url?'<img src="'+esc(o.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+'<div><strong>'+esc(who)+'</strong><span class="marketbadge '+esc(o.marketplace_mode)+'">'+esc(marketplaceLabel(o.marketplace_mode))+'</span></div>'+dealText+'</div><div class="offerbody"><strong>'+esc(o.card_name)+'</strong><span>'+esc(o.set_name)+' • #'+esc(o.local_id)+'</span><span>'+esc(o.variant)+' • '+esc(o.condition)+' • '+esc(o.language)+'</span><span>Available quantity: '+Number(o.offer_quantity||1)+'</span>'+(o.offer_note?'<p>'+esc(o.offer_note)+'</p>':'')+(o.marketplace_note?'<p class="marketnote">'+esc(o.marketplace_note)+'</p>':'')+'<button type="button" class="secondary">View @'+esc(o.username||'collector')+' profile</button></div>';
-    e.querySelector('button').onclick=()=>{go('community');viewProfile(o.user_id);};
+    const actions=o.user_id===currentUser.id
+      ?'<button type="button" class="secondary" data-view>View my profile</button>'
+      :'<button type="button" class="primary" data-message>Message '+esc(o.username||'collector')+'</button><button type="button" class="secondary" data-view>View profile</button><button type="button" class="ghost" data-report>Report listing</button>';
+    e.innerHTML='<div class="offeruser">'+(o.avatar_url?'<img src="'+esc(o.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+'<div><strong>'+esc(who)+'</strong><span class="marketbadge '+esc(o.marketplace_mode)+'">'+esc(marketplaceLabel(o.marketplace_mode))+'</span></div>'+dealText+'</div><div class="offerbody"><strong>'+esc(o.card_name)+'</strong><span>'+esc(o.set_name)+' • #'+esc(o.local_id)+'</span><span>'+esc(o.variant)+' • '+esc(o.condition)+' • '+esc(o.language)+'</span><span>Available quantity: '+Number(o.offer_quantity||1)+'</span>'+(o.offer_note?'<p>'+esc(o.offer_note)+'</p>':'')+(o.marketplace_note?'<p class="marketnote">'+esc(o.marketplace_note)+'</p>':'')+'<div class="offeractions">'+actions+'</div></div>';
+    e.querySelector('[data-view]').onclick=()=>{go('community');switchCommunityTab('profiles');viewProfile(o.user_id);};
+    const msg=e.querySelector('[data-message]');if(msg)msg.onclick=()=>{go('community');startPrivateConversation(o.user_id,{type:'marketplace_listing',id:o.collection_item_id,label:o.card_name+' — '+o.set_name+' #'+o.local_id});};
+    const rep=e.querySelector('[data-report]');if(rep)rep.onclick=()=>openReport({type:'marketplace_listing',id:o.collection_item_id,userId:o.user_id,label:'Report '+o.card_name+' listing by @'+(o.username||'collector'),category:'fraud'});
     box.appendChild(e);
   });
   $('#marketOfferHeading').scrollIntoView({behavior:'smooth',block:'start'});
 }
-
 
 async function profileMapFor(userIds){
   const ids=[...new Set((userIds||[]).filter(Boolean))];
@@ -802,7 +810,7 @@ function switchSettingsSection(section){
   select.value=section;
   document.querySelectorAll('[data-settings-pane]').forEach(p=>p.classList.toggle('active',p.dataset.settingsPane===section));
   $('#settingsSectionHint').textContent=SETTINGS_HINTS[section]||'';
-  if(section==='admin'&&isAdmin)Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit()]);
+  if(section==='admin'&&isAdmin)Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit(),loadReports()]);
 }
 
 function syncAdminSettingsOption(){
@@ -1105,6 +1113,32 @@ async function loadUserManagement(){
   });
 }
 
+async function loadReports(){
+  if(!isAdmin||!$('#reportQueue'))return;
+  const [{data:reports,error},{data:profiles}]=await Promise.all([
+    sb.from('user_reports').select('*').order('created_at',{ascending:false}).limit(100),
+    sb.from('profiles').select('id,username')
+  ]);
+  const box=$('#reportQueue');box.innerHTML='';
+  if(error){box.innerHTML='<div class="empty">Could not load reports.</div>';return;}
+  const names=Object.fromEntries((profiles||[]).map(p=>[p.id,p.username]));
+  const pending=(reports||[]).filter(r=>r.status==='pending'||r.status==='reviewed');
+  if(!pending.length){box.innerHTML='<div class="empty">No open reports.</div>';return;}
+  pending.forEach(r=>{
+    const e=document.createElement('article');e.className='reportrow';
+    const target=r.target_user_id?(names[r.target_user_id]?'@'+names[r.target_user_id]:r.target_user_id.slice(0,8)):(r.target_type||'content');
+    e.innerHTML='<div><div class="eyebrow">'+esc(r.category.toUpperCase())+'</div><strong>'+esc(target)+'</strong><p>'+esc(r.reason)+'</p><small>'+esc(r.target_type)+' • '+new Date(r.created_at).toLocaleString()+'</small></div><div class="reportactions"><button class="secondary" data-reviewed type="button">Mark reviewed</button>'+(r.target_user_id?'<button class="dangerbtn" data-ban type="button">Ban user</button>':'')+'<button class="ghost" data-dismiss type="button">Dismiss</button></div>';
+    e.querySelector('[data-reviewed]').onclick=()=>updateReportStatus(r.id,'reviewed');
+    e.querySelector('[data-dismiss]').onclick=()=>updateReportStatus(r.id,'dismissed');
+    const ban=e.querySelector('[data-ban]');if(ban)ban.onclick=()=>openAdminAction('ban',{userId:r.target_user_id,label:target});
+    box.appendChild(e);
+  });
+}
+async function updateReportStatus(id,status){
+  const {error}=await sb.from('user_reports').update({status,reviewed_at:new Date().toISOString(),reviewed_by:currentUser.id}).eq('id',id);
+  if(error)return toast('Could not update report');loadReports();toast('Report updated');
+}
+
 async function loadAdminAudit(){
   if(!isAdmin)return;
   const [{data:actions,error},{data:profiles}]=await Promise.all([
@@ -1127,7 +1161,7 @@ async function checkAdmin(){
   const {data}=await sb.from('admin_users').select('user_id').eq('user_id',currentUser.id).maybeSingle();
   isAdmin=!!data;
   syncAdminSettingsOption();
-  if(isAdmin)await Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit()]);
+  if(isAdmin)await Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit(),loadReports()]);
 }
 
 async function loadApplications(){
