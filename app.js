@@ -778,12 +778,26 @@ async function search(){const n=$('#searchName').value.trim(),no=$('#searchNumbe
 function renderResults(cards){const b=$('#results');b.innerHTML='';if(!cards.length){b.innerHTML='<div class="empty">No matching cards found.</div>';return;}cards.slice(0,60).forEach(c=>{const e=document.createElement('article');e.className='result';e.innerHTML='<img loading="lazy" src="'+esc(imageUrl(c.image))+'" alt="'+esc(c.name)+'"><div class="info"><strong>'+esc(c.name)+'</strong><div class="meta">#'+esc(c.localId)+' • '+esc(c.id)+'</div><button>View / Add</button></div>';e.querySelector('button').onclick=()=>openCard(c.id);b.appendChild(e);});}
 
 async function openCard(id){
-  $('#dialogBody').innerHTML='<div class="empty">Loading card…</div>';$('#cardDialog').showModal();
+  $('#dialogBody').innerHTML='<div class="skeletoncard"></div><div class="skeletonline"></div><div class="skeletonline short"></div>';$('#cardDialog').showModal();
   try{
     currentCard=await pokemonCard(id);
     const variants=pokemonVariants(currentCard),p=pokemonPrice(currentCard,variants[0]);
     const folderOptions='<option value="">Main Library only</option>'+folders.map(f=>'<option value="'+esc(f.id)+'">'+esc(f.name)+'</option>').join('');
-    $('#dialogBody').innerHTML='<div class="dialogtop"><img src="'+esc(imageUrl(currentCard.image,'high'))+'"><div><div class="eyebrow">'+esc(currentCard.set?.name||'Pokémon TCG')+'</div><h2>'+esc(currentCard.name)+'</h2><div class="muted">#'+esc(currentCard.localId)+(currentCard.rarity?' • '+esc(currentCard.rarity):'')+'</div><div class="pricebox"><div id="dialogPriceLabel" class="muted">'+esc(p.label)+'</div><div id="dialogPrice" class="pricebig">'+money(p.value,p.currency)+'</div></div></div></div><div class="fields"><label>Variant<select id="variant">'+variants.map(v=>'<option>'+esc(v)+'</option>').join('')+'</select></label><label>Condition<select id="condition"><option>Near Mint</option><option>Lightly Played</option><option>Moderately Played</option><option>Heavily Played</option><option>Damaged</option></select></label><label>Language<select id="language"><option>English</option><option>Japanese</option><option>French</option><option>German</option><option>Italian</option><option>Spanish</option></select></label><label>Quantity<input id="qty" type="number" min="1" value="1"></label><label>Price paid each <span class="muted">optional</span><input id="pricePaid" type="number" min="0" step="0.01" placeholder="0.00"></label><label>Add to folder<select id="addFolder">'+folderOptions+'</select></label></div><div class="dialogactions"><button id="addCard" type="button" class="primary">Add to collection</button><button class="secondary" value="cancel">Cancel</button></div>';
+    $('#dialogBody').innerHTML='<div class="dialogtop"><img id="lookupCardImage" src="'+esc(imageUrl(currentCard.image,'high'))+'" alt="'+esc(currentCard.name)+'"><div><div class="eyebrow">'+esc(currentCard.set?.name||'Pokémon TCG')+'</div><h2>'+esc(currentCard.name)+'</h2><div class="muted">#'+esc(currentCard.localId)+(currentCard.rarity?' • '+esc(currentCard.rarity):'')+'</div><div class="pricebox"><div id="dialogPriceLabel" class="muted">'+esc(p.label)+'</div><div id="dialogPrice" class="pricebig">'+money(p.value,p.currency)+'</div></div></div></div>'+
+      '<div class="fields">'+
+      '<label>Variant<select id="variant">'+variants.map(v=>'<option>'+esc(v)+'</option>').join('')+'</select></label>'+
+      '<label>Condition<select id="condition"><option>Near Mint</option><option>Lightly Played</option><option>Moderately Played</option><option>Heavily Played</option><option>Damaged</option></select></label>'+
+      '<label>Language<select id="language"><option>English</option><option>Japanese</option><option>French</option><option>German</option><option>Italian</option><option>Spanish</option></select></label>'+
+      '<label>Quantity<input id="qty" type="number" min="1" value="1"></label>'+
+      '<label>Price paid each <span class="muted">optional</span><input id="pricePaid" type="number" min="0" step="0.01" placeholder="0.00"></label>'+
+      '<label>Purchase date<input id="purchaseDate" type="date"></label>'+
+      '<label>Card state<select id="cardState"><option value="raw">Raw</option><option value="graded">Graded</option></select></label>'+
+      '<label>Grading company<select id="gradingCompany"><option value="">—</option><option>PSA</option><option>CGC</option><option>BGS</option><option>TAG</option><option>SGC</option><option>Other</option></select></label>'+
+      '<label>Grade<input id="grade" maxlength="20" placeholder="e.g. 10"></label>'+
+      '<label>Certification #<input id="certNumber" maxlength="80" placeholder="Optional"></label>'+
+      '<label>Add to folder<select id="addFolder">'+folderOptions+'</select></label>'+
+      '</div><div class="dialogactions"><button id="addCard" type="button" class="primary">Add to collection</button><button class="secondary" value="cancel">Cancel</button></div>';
+    $('#lookupCardImage').onclick=()=>openImageZoom($('#lookupCardImage').src,currentCard.name);
     $('#variant').onchange=()=>{const q=pokemonPrice(currentCard,$('#variant').value);$('#dialogPrice').textContent=money(q.value,q.currency);$('#dialogPriceLabel').textContent=q.label;};
     $('#addCard').onclick=addCurrent;
   }catch(e){$('#dialogBody').innerHTML='<div class="empty">'+esc(e.message)+'</div>';}
@@ -791,23 +805,43 @@ async function openCard(id){
 async function addCurrent(){
   const variant=$('#variant').value,condition=$('#condition').value,language=$('#language').value;
   const qty=Math.max(1,parseInt($('#qty').value||'1',10)),p=pokemonPrice(currentCard,variant);
-  const old=items.find(x=>x.game==='pokemon'&&x.cardId===currentCard.id&&x.variant===variant&&x.condition===condition&&x.language===language);
+  const old=items.find(x=>x.game==='pokemon'&&x.cardId===currentCard.id&&x.variant===variant&&x.condition===condition&&x.language===language&&x.cardState===$('#cardState').value);
   const now=new Date().toISOString();
   const paid=$('#pricePaid').value===''?(old?.pricePaid??null):Number($('#pricePaid').value);
-  const x={game:'pokemon',cardId:currentCard.id,name:currentCard.name,localId:String(currentCard.localId),setId:currentCard.set?.id||'',setName:currentCard.set?.name||'',rarity:currentCard.rarity||'',variant,condition,language,quantity:(old?old.quantity:0)+qty,image:currentCard.image||'',price:p.value==null?null:Number(p.value),pricePaid:paid,priceCurrency:p.currency,priceSource:p.label,priceUpdatedAt:now,entrySource:'provider',notes:old?.notes||'',addedAt:old?.addedAt||now};
+  const id=old?.id||crypto.randomUUID();
+  const x={
+    id,game:'pokemon',cardId:currentCard.id,name:currentCard.name,localId:String(currentCard.localId),
+    setId:currentCard.set?.id||'',setName:currentCard.set?.name||'',rarity:currentCard.rarity||'',
+    variant,condition,language,quantity:(old?old.quantity:0)+qty,image:currentCard.image||'',
+    price:p.value==null?null:Number(p.value),pricePaid:paid,priceCurrency:p.currency,priceSource:p.label,
+    priceUpdatedAt:now,entrySource:'provider',cardState:$('#cardState').value,
+    gradingCompany:$('#gradingCompany').value.trim(),grade:$('#grade').value.trim(),
+    certNumber:$('#certNumber').value.trim(),purchaseDate:$('#purchaseDate').value||'',
+    notes:old?.notes||'',addedAt:old?.addedAt||now,updatedAt:now
+  };
+  const folderId=$('#addFolder').value;
+  if(offlineMode||!navigator.onLine){
+    if(old)Object.assign(old,x);else items.unshift(x);
+    queueOfflineMutation(old?'quantity_update':'collection_insert',
+      old?{id,quantity:x.quantity,updated_at:now}:{id,...toRow(x),added_at:now,updated_at:now},
+      old?.updatedAt||null);
+    if(folderId){
+      if(!folderMembership.has(folderId))folderMembership.set(folderId,new Set());
+      folderMembership.get(folderId).add(id);
+      queueOfflineMutation('folder_assignments',{itemId:id,folderIds:[folderId]});
+    }
+    $('#cardDialog').close();renderDashboard();renderLibrary();haptic();toast(currentCard.name+' saved offline');return;
+  }
   let q;
   if(old)q=await sb.from('collection_items').update(toRow(x)).eq('id',old.id).select().single();
-  else q=await sb.from('collection_items').insert({...toRow(x),added_at:now}).select().single();
+  else q=await sb.from('collection_items').insert({id,...toRow(x),added_at:now,updated_at:now}).select().single();
   if(q.error)return toast('Could not save card');
   if(currentCard?.set?.id&&currentCard?.id){
     sb.from('master_set_cards').upsert({user_id:currentUser.id,game:'pokemon',set_id:currentCard.set.id,card_id:currentCard.id},{onConflict:'user_id,game,set_id,card_id'}).then(()=>{});
   }
-  const folderId=$('#addFolder').value;
-  if(folderId){
-    await sb.from('collection_folder_items').upsert({folder_id:folderId,collection_item_id:q.data.id},{onConflict:'folder_id,collection_item_id'});
-  }
+  if(folderId)await sb.from('collection_folder_items').upsert({folder_id:folderId,collection_item_id:q.data.id},{onConflict:'folder_id,collection_item_id'});
   $('#cardDialog').close();
-  await loadCollection();await loadFolders();renderDashboard();renderLibrary();toast(currentCard.name+' saved');
+  await loadCollection();await loadFolders();saveOfflineSnapshot();renderDashboard();renderLibrary();haptic();toast(currentCard.name+' saved');
 }
 function rowFor(x,compact){const e=document.createElement('div');e.className='cardrow';const total=(Number(x.price)||0)*(Number(x.quantity)||0);e.innerHTML='<img loading="lazy" src="'+esc(imageUrl(x.image))+'"><div class="cardmain"><div class="cardtitle">'+esc(x.name)+'</div><div class="cardmeta">'+esc(x.setName)+' • #'+esc(x.localId)+' • '+esc(x.variant)+' • '+esc(x.condition)+'</div>'+(compact?'':'<div class="qty"><button data-a="dec">−</button><span>'+x.quantity+'</span><button data-a="inc">+</button><button data-a="del">×</button></div>')+'</div><div class="cardprice">'+money(total,x.priceCurrency||'USD')+'<div class="cardmeta">×'+x.quantity+'</div></div>';if(!compact){e.querySelector('[data-a="inc"]').onclick=()=>adjust(x,1);e.querySelector('[data-a="dec"]').onclick=()=>adjust(x,-1);e.querySelector('[data-a="del"]').onclick=()=>removeEntry(x);}return e;}
 async function adjust(x,d){if(!requireOnline('Changing quantities needs an internet connection.'))return;const q=x.quantity+d;if(q<=0)return removeEntry(x);const {error}=await sb.from('collection_items').update({quantity:q,updated_at:new Date().toISOString()}).eq('id',x.id);if(error)return toast('Could not update quantity');await loadCollection();saveOfflineSnapshot();renderLibrary();renderDashboard();}
