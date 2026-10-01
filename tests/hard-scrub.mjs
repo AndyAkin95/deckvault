@@ -202,7 +202,7 @@ function watch(page,label){
 }
 
 async function loggedOutPass(browser, pass) {
-  const context=await browser.newContext({serviceWorkers:'allow'});
+  const context=await browser.newContext({serviceWorkers:'block'});
   const page=await context.newPage();
   await setupRoutes(page,false);
   const w=watch(page,'logged-out pass '+pass);
@@ -228,6 +228,32 @@ async function loggedOutPass(browser, pass) {
   await w.assertClean();
   await context.close();
   console.log('LOGGED-OUT PASS',pass,'OK');
+}
+
+async function serviceWorkerPass(browser, pass) {
+  const context=await browser.newContext({serviceWorkers:'allow'});
+  const page=await context.newPage();
+  await setupRoutes(page,false);
+  const w=watch(page,'service-worker pass '+pass);
+  await page.goto(BASE,{waitUntil:'domcontentloaded'});
+  await page.waitForSelector('#signinPane:not(.hidden)',{timeout:15000});
+  await page.waitForFunction(()=>('serviceWorker' in navigator),null,{timeout:5000});
+  // Allow install/controllerchange cycle to settle, then verify reloads remain healthy.
+  await page.waitForTimeout(700);
+  for(let i=0;i<2;i++){
+    await page.reload({waitUntil:'domcontentloaded'});
+    await page.waitForSelector('#signinPane:not(.hidden)',{timeout:10000});
+  }
+  const swState=await page.evaluate(async()=>({
+    supported:'serviceWorker' in navigator,
+    controlled:!!navigator.serviceWorker.controller,
+    registrations:(await navigator.serviceWorker.getRegistrations()).length
+  }));
+  assert(swState.supported,'Service workers are unexpectedly unsupported in Chromium test');
+  assert(swState.registrations>=1,'DeckVault service worker did not register: '+JSON.stringify(swState));
+  await w.assertClean();
+  await context.close();
+  console.log('SERVICE-WORKER PASS',pass,'OK',swState);
 }
 
 async function signedInPass(browser, pass) {
@@ -313,6 +339,7 @@ const browser=await chromium.launch({headless:true});
 try{
   for(let pass=1;pass<=2;pass++) await loggedOutPass(browser,pass);
   for(let pass=1;pass<=2;pass++) await signedInPass(browser,pass);
+  for(let pass=1;pass<=2;pass++) await serviceWorkerPass(browser,pass);
 } finally {
   await browser.close();
 }
