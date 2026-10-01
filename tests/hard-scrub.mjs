@@ -228,13 +228,25 @@ async function loggedOutPass(browser, pass) {
 }
 
 async function signedInPass(browser, pass) {
-  const context=await browser.newContext({serviceWorkers:'allow'});
+  const context=await browser.newContext({serviceWorkers:'block'});
   const page=await context.newPage();
   await setupRoutes(page,true);
   const w=watch(page,'signed-in pass '+pass);
   await page.goto(BASE,{waitUntil:'domcontentloaded'});
   await page.waitForSelector('#appShell:not(.hidden)',{timeout:15000});
   await page.waitForTimeout(600);
+  const shellState=await page.evaluate(()=>({
+    appShell:document.querySelector('#appShell')?.className,
+    authGate:document.querySelector('#authGate')?.className,
+    onboardingGate:document.querySelector('#onboardingGate')?.className,
+    termsGate:document.querySelector('#termsGate')?.className,
+    navDisplay:getComputedStyle(document.querySelector('.bottomnav')).display,
+    navVisibility:getComputedStyle(document.querySelector('.bottomnav')).visibility,
+    navRect:document.querySelector('.bottomnav').getBoundingClientRect().toJSON()
+  }));
+  assert(!shellState.appShell.includes('hidden'),'App shell became hidden after signed-in initialization: '+JSON.stringify(shellState));
+  assert(shellState.navDisplay!=='none'&&shellState.navVisibility!=='hidden'&&shellState.navRect.height>0,
+    'Bottom nav is not visible after signed-in initialization: '+JSON.stringify(shellState));
 
   const views=['dashboard','lookup','library','scanner','marketplace','community','settings'];
   for(const view of views){
