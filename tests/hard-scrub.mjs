@@ -231,7 +231,14 @@ async function setupRoutes(page, signedIn, admin=false) {
         }
       })});
     }
-    if(url.endsWith('/sets')) return route.fulfill({status:200,contentType:'application/json',body:'[]'});
+    if(url.endsWith('/sets')) return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([
+      {id:'sv3',name:'Obsidian Flames',cardCount:{official:197,total:230}},
+      {id:'sv4',name:'Another Test Set',cardCount:{official:180,total:197}}
+    ])});
+    if(url.includes('/cards?'))return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([
+      {id:'sv3-125',localId:'125',name:'Pikachu',image:''},
+      {id:'sv4-125',localId:'125',name:'Pikachu',image:''}
+    ])});
     return route.fulfill({status:200,contentType:'application/json',body:'[]'});
   });
   await page.route('https://cdn.jsdelivr.net/npm/tesseract.js@**', route =>
@@ -379,6 +386,17 @@ async function signedInPass(browser, pass) {
     await page.waitForTimeout(120);
     assert(await page.locator('#'+view).evaluate(el=>el.classList.contains('active')), 'View did not activate: '+view);
   }
+
+  // Manual scanner fallback must produce selectable multiple-set matches.
+  await page.click('.bottomnav [data-go="scanner"]');
+  await page.fill('#scanManualNumber','125/197');
+  await page.click('#scanManualSearch');
+  await page.waitForSelector('#scanChoices:not(.hidden)',{timeout:10000});
+  assert(await page.locator('.scanchoice').count()===2,'Scanner failed to display two plausible set matches');
+  await page.locator('.scanchoice').first().click();
+  await page.waitForSelector('#activeScanCandidate:not(.hidden)');
+  assert((await page.locator('#activeScanCandidateName').innerText()).includes('Pikachu'),'Scanner failed to choose card');
+  await page.click('.bottomnav [data-go="community"]');
 
   // Community sub-tabs.
   await page.click('.bottomnav [data-go="community"]');
