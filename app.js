@@ -1336,12 +1336,17 @@ function parseCardFractions(text){
     let left=lhs.match(/^([A-Z]{0,4})([0-9OIL]{1,4})$/);
     const right=rhs.match(/^([A-Z]{0,4})([0-9OIL]{2,4})$/);
     if(!left||!right)continue;
-    if(/^[OIL]/.test(left[1])&&!/[A-HJ-NP-Z]/.test(left[1]))left=['', '',left[1]+left[2]];
-    const number=Number(asNumber(left[2]));
-    const denominator=Number(asNumber(right[2]));
-    const local=normalizeCollectorId(left[1]+asNumber(left[2]));
+    const fixLeadingDigit=(parts)=>{
+      let prefix=parts[1],digits=parts[2];
+      if(/^[OIL]+$/.test(prefix)){digits=prefix+digits;prefix='';}
+      return {prefix,digits};
+    };
+    const leftParts=fixLeadingDigit(left),rightParts=fixLeadingDigit(right);
+    const number=Number(asNumber(leftParts.digits));
+    const denominator=Number(asNumber(rightParts.digits));
+    const local=normalizeCollectorId(leftParts.prefix+asNumber(leftParts.digits));
     if(!denominator||denominator<10||denominator>999||!number||number>9999)continue;
-    if(right[1]&&left[1]&&right[1]!==left[1])continue;
+    if(rightParts.prefix&&leftParts.prefix&&rightParts.prefix!==leftParts.prefix)continue;
     fractions.push({localId:local,denominator,raw:m[0].trim()});
   }
   return [...new Map(fractions.map(f=>[f.localId+'/'+f.denominator,f])).values()].reverse();
