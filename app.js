@@ -95,7 +95,22 @@ async function loadCollection(){
 }
 function fromRow(r){return {id:r.id,game:r.game,cardId:r.card_id,name:r.name,localId:r.local_id,setId:r.set_id,setName:r.set_name,rarity:r.rarity,variant:r.variant,condition:r.condition,language:r.language,quantity:r.quantity,image:r.image_url,price:r.price==null?null:Number(r.price),priceCurrency:r.price_currency,priceSource:r.price_source,priceUpdatedAt:r.price_updated_at,notes:r.notes||'',addedAt:r.added_at,updatedAt:r.updated_at};}
 function toRow(x){return {user_id:currentUser.id,game:x.game,card_id:x.cardId,name:x.name,local_id:x.localId,set_id:x.setId,set_name:x.setName,rarity:x.rarity,variant:x.variant,condition:x.condition,language:x.language,quantity:x.quantity,image_url:x.image,price:x.price,price_currency:x.priceCurrency,price_source:x.priceSource,price_updated_at:x.priceUpdatedAt,notes:x.notes||'',updated_at:new Date().toISOString()};}
-async function signIn(e){e.preventDefault();setAuthMessage('Signing in…');const {data,error}=await sb.auth.signInWithPassword({email:$('#signInEmail').value.trim(),password:$('#signInPassword').value});if(error)return setAuthMessage(error.message,true);await showApp(data.user);}
+async function signIn(e){
+  e.preventDefault();
+  setAuthMessage('Signing in…');
+  try{
+    const {data,error}=await sb.auth.signInWithPassword({
+      email:$('#signInEmail').value.trim(),
+      password:$('#signInPassword').value
+    });
+    if(error)return setAuthMessage(error.message,true);
+    setAuthMessage('Loading your DeckVault…');
+    await showApp(data.user);
+  }catch(err){
+    console.error(err);
+    setAuthMessage(err?.message||'Sign-in failed. Please try again.',true);
+  }
+}
 async function signUp(e){e.preventDefault();showPane('applicationPane');setAuthMessage('New DeckVault accounts require administrator approval.');}
 async function resetPassword(e){e.preventDefault();setAuthMessage('Sending recovery email…');const {error}=await sb.auth.resetPasswordForEmail($('#resetEmail').value.trim(),{redirectTo:location.origin+location.pathname});if(error)return setAuthMessage(error.message,true);setAuthMessage('Recovery email sent.');}
 async function signOut(){await sb.auth.signOut();items=[];hideAccessGates();showAuth();}
@@ -140,7 +155,18 @@ async function init(){
   $('#clearData').onclick=async()=>{if(confirm('Delete every card in your DeckVault account collection?')){const {error}=await sb.from('collection_items').delete().eq('user_id',currentUser.id);if(error)return toast('Could not clear collection');await loadCollection();renderDashboard();renderLibrary();toast('Collection cleared');}};
   $('#priceSource').value=pricePref();$('#priceSource').onchange=e=>{localStorage.setItem('deckvault-price-source',e.target.value);toast('Price source saved');};
   window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;$('#installBtn').classList.remove('hidden');});$('#installBtn').onclick=async()=>{if(!installPrompt)return;installPrompt.prompt();await installPrompt.userChoice;installPrompt=null;$('#installBtn').classList.add('hidden');};
-  sb.auth.onAuthStateChange(async(event,session)=>{if(event==='SIGNED_OUT')showAuth();else if(session?.user&&(!currentUser||currentUser.id!==session.user.id))await showApp(session.user);});
+  sb.auth.onAuthStateChange((event,session)=>{
+    if(event==='SIGNED_OUT'){
+      setTimeout(showAuth,0);
+      return;
+    }
+    if(session?.user&&(!currentUser||currentUser.id!==session.user.id)){
+      setTimeout(()=>showApp(session.user).catch(err=>{
+        console.error(err);
+        setAuthMessage(err?.message||'Could not finish signing in.',true);
+      }),0);
+    }
+  });
   const {data:{session}}=await sb.auth.getSession();if(session?.user)await showApp(session.user);else showAuth();
   if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(console.warn);
 }
