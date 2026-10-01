@@ -903,9 +903,10 @@ async function renderDashboardExtras(){
   }
   if(!navigator.onLine||offlineMode)return;
   try{
-    const [{data:watch},{data:owned}]=await Promise.all([
+    const [{data:watch},{data:owned},{data:movers,error:moverError}]=await Promise.all([
       sb.from('card_watchlist').select('card_id').eq('user_id',currentUser.id),
-      sb.from('master_set_cards').select('set_id,card_id').eq('user_id',currentUser.id).eq('game','pokemon')
+      sb.from('master_set_cards').select('set_id,card_id').eq('user_id',currentUser.id).eq('game','pokemon'),
+      sb.rpc('collection_price_movers',{p_days:30,p_limit:8})
     ]);
     $('#analyticsWatchCount').textContent=String(watch?.length||0);
     const setBox=$('#analyticsSets');if(setBox){
@@ -917,6 +918,12 @@ async function renderDashboardExtras(){
       setBox.innerHTML='';
       if(!top.length)setBox.innerHTML='<div class="empty compact">No Master Set progress yet.</div>';
       top.forEach(r=>{const pct=r.total?Math.min(100,r.owned/r.total*100):0;const e=document.createElement('div');e.className='analyticsprogress';e.innerHTML='<div><span>'+esc(r.name)+'</span><strong>'+r.owned+' / '+r.total+'</strong></div><i><b style="width:'+pct+'%"></b></i>';setBox.appendChild(e);});
+    }
+    const moverBox=$('#analyticsMovers');if(moverBox){
+      moverBox.innerHTML='';
+      if(moverError){moverBox.innerHTML='<div class="empty compact">Could not load price movers.</div>';}
+      else if(!movers?.length){moverBox.innerHTML='<div class="empty compact">Price movers will appear after DeckVault has enough 30-day snapshot history.</div>';}
+      else movers.forEach(m=>{const pct=Number(m.percent_change||0),e=document.createElement('button');e.type='button';e.className='moverrow '+(pct>=0?'up':'down');e.innerHTML='<div><strong>'+esc(m.card_name)+'</strong><span>'+esc(m.set_name||'')+' • '+esc(m.variant||'')+'</span></div><div><b>'+(pct>=0?'+':'')+pct.toFixed(1)+'%</b><small>'+money(m.previous_value,m.currency||'USD')+' → '+money(m.current_value,m.currency||'USD')+'</small></div>';e.onclick=()=>{const card=items.find(x=>x.cardId===m.card_id&&x.variant===m.variant);if(card){go('library');openLibraryCardDetails(card);}};moverBox.appendChild(e);});
     }
   }catch(e){console.warn('Dashboard extras',e);}
 }
