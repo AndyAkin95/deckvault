@@ -1503,7 +1503,7 @@ async function init(){
   $('#addCopyBtn').onclick=addCopyRow;
   $('#importCollectionCsv').onchange=async e=>{const file=e.target.files[0];if(file)try{await importCollectionCsv(file,$('#importCollectionFormat').value);}catch(err){console.error(err);$('#importCollectionStatus').textContent=err.message;}e.target.value='';};
   updateOfflineQueueStatus();
-  $('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
+  document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
   installSwipeBack($('#libraryCardDialog'),()=>$('#libraryCardDialog').close());
   installSwipeBack($('#imageZoomDialog'),()=>$('#imageZoomDialog').close());
   $('#signInForm').onsubmit=signIn;$('#signUpForm').onsubmit=signUp;$('#resetForm').onsubmit=resetPassword;
