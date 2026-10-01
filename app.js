@@ -11,8 +11,54 @@ const imageUrl=(base,q='low')=>base?base+'/'+q+'.webp':'';
 function toast(m){const e=$('#toast');e.textContent=m;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),1800);}
 function setAuthMessage(m,bad=false){const e=$('#authMessage');e.textContent=m||'';e.classList.toggle('error',bad);}
 function showPane(id){['signinPane','signupPane','applicationPane','resetPane'].forEach(x=>{const e=$('#'+x);if(e)e.classList.toggle('hidden',x!==id);});setAuthMessage('');}
-function showAuth(){currentUser=null;$('#authGate').classList.remove('hidden');$('#appShell').classList.add('hidden');}
-async function showApp(user){
+function hideAccessGates(){
+  ['bannedGate','termsGate','onboardingGate','appShell'].forEach(id=>{const e=$('#'+id);if(e)e.classList.add('hidden');});
+}
+function showAuth(){
+  currentUser=null;
+  hideAccessGates();
+  $('#authGate').classList.remove('hidden');
+}
+async function getCurrentTerms(){
+  const {data,error}=await sb.from('legal_documents').select('version,title,body,effective_at').eq('document_key','terms').eq('is_current',true).single();
+  if(error)throw error;
+  return data;
+}
+function renderTerms(target,doc){
+  target.textContent=doc.body||'';
+}
+async function openTermsDialog(){
+  try{
+    const doc=await getCurrentTerms();
+    $('#termsDialogTitle').textContent=doc.title;
+    $('#termsDialogVersion').textContent='Version '+doc.version+' • Effective '+new Date(doc.effective_at).toLocaleDateString();
+    renderTerms($('#termsDialogBody'),doc);
+    $('#termsDialog').showModal();
+  }catch(e){toast('Could not load Terms');}
+}
+async function acceptCurrentTerms(){
+  if(!currentUser||!$('#acceptTermsCheck').checked)return;
+  try{
+    const doc=await getCurrentTerms();
+    const {error}=await sb.from('terms_acceptances').insert({user_id:currentUser.id,terms_version:doc.version});
+    if(error&&error.code!=='23505')throw error;
+    $('#termsGate').classList.add('hidden');
+    await showApp(currentUser,true);
+  }catch(e){toast('Could not save Terms acceptance');}
+}
+async function showApp(user,termsJustAccepted=false){
+  currentUser=user;
+  hideAccessGates();
+
+  const {data:ban,error:banError}=await sb.from('user_bans').select('reason,banned_at,active').eq('user_id',user.id).eq('active',true).maybeSingle();
+  if(!banError&&ban){
+    $('#authGate').classList.add('hidden');
+    $('#banReason').textContent=ban.reason||'Account access has been suspended.';
+    $('#banDate').textContent=ban.banned_at?'Banned '+new Date(ban.banned_at).toLocaleString():'';
+    $('#bannedGate').classList.remove('hidden');
+    return false;
+  }
+
   const {data:approved,error:approvalError}=await sb.from('approved_users').select('user_id').eq('user_id',user.id).maybeSingle();
   if(approvalError||!approved){
     await sb.auth.signOut();
@@ -20,12 +66,25 @@ async function showApp(user){
     setAuthMessage('This account has not been approved for DeckVault yet.',true);
     return false;
   }
-  currentUser=user;
+
+  const doc=await getCurrentTerms();
+  const {data:accepted}=await sb.from('terms_acceptances').select('terms_version').eq('user_id',user.id).eq('terms_version',doc.version).maybeSingle();
+  if(!accepted&&!termsJustAccepted){
+    $('#authGate').classList.add('hidden');
+    $('#termsGateVersion').textContent='Version '+doc.version+' • Effective '+new Date(doc.effective_at).toLocaleDateString();
+    renderTerms($('#termsGateBody'),doc);
+    $('#acceptTermsCheck').checked=false;
+    $('#acceptTermsBtn').disabled=true;
+    $('#termsGate').classList.remove('hidden');
+    return false;
+  }
+
   $('#authGate').classList.add('hidden');
   $('#appShell').classList.remove('hidden');
   $('#accountChip').textContent=user.email||'Signed in';
   $('#accountEmail').textContent=user.email||'';
   await loadCollection();renderDashboard();renderLibrary();
+  if(window.refreshSocialState)setTimeout(()=>window.refreshSocialState(),50);
   return true;
 }
 async function loadCollection(){
@@ -39,7 +98,7 @@ function toRow(x){return {user_id:currentUser.id,game:x.game,card_id:x.cardId,na
 async function signIn(e){e.preventDefault();setAuthMessage('Signing in…');const {data,error}=await sb.auth.signInWithPassword({email:$('#signInEmail').value.trim(),password:$('#signInPassword').value});if(error)return setAuthMessage(error.message,true);await showApp(data.user);}
 async function signUp(e){e.preventDefault();showPane('applicationPane');setAuthMessage('New DeckVault accounts require administrator approval.');}
 async function resetPassword(e){e.preventDefault();setAuthMessage('Sending recovery email…');const {error}=await sb.auth.resetPasswordForEmail($('#resetEmail').value.trim(),{redirectTo:location.origin+location.pathname});if(error)return setAuthMessage(error.message,true);setAuthMessage('Recovery email sent.');}
-async function signOut(){await sb.auth.signOut();items=[];showAuth();}
+async function signOut(){await sb.auth.signOut();items=[];hideAccessGates();showAuth();}
 
 function go(view){$$('.view').forEach(v=>v.classList.toggle('active',v.id===view));$$('.bottomnav button').forEach(b=>b.classList.toggle('active',b.dataset.go===view));window.scrollTo({top:0,behavior:'smooth'});if(view==='dashboard')renderDashboard();if(view==='library')renderLibrary();}
 async function pokemonSearch(name,number){const p=new URLSearchParams();if(name)p.set('name',name.trim());if(number)p.set('localId',number.trim());const r=await fetch(API+'/cards?'+p);if(!r.ok)throw new Error('TCGdex search failed ('+r.status+')');return r.json();}
@@ -71,13 +130,17 @@ async function init(){
   $$('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
   $('#signInForm').onsubmit=signIn;$('#signUpForm').onsubmit=signUp;$('#resetForm').onsubmit=resetPassword;
   $('#showSignUp').onclick=()=>showPane('applicationPane');$('#showSignIn').onclick=()=>showPane('signinPane');$('#showReset').onclick=()=>showPane('resetPane');$('#resetBack').onclick=()=>showPane('signinPane');
-  $('#signOutBtn').onclick=signOut;$('#searchBtn').onclick=search;$('#searchName').onkeydown=e=>{if(e.key==='Enter')search();};$('#searchNumber').onkeydown=e=>{if(e.key==='Enter')search();};
+  $('#signOutBtn').onclick=signOut;$('#bannedSignOut').onclick=signOut;$('#termsSignOut').onclick=signOut;
+  $('#viewTermsAuth').onclick=openTermsDialog;$('#viewTermsBtn').onclick=openTermsDialog;
+  $('#acceptTermsCheck').onchange=e=>{$('#acceptTermsBtn').disabled=!e.target.checked;};
+  $('#acceptTermsBtn').onclick=acceptCurrentTerms;
+  $('#searchBtn').onclick=search;$('#searchName').onkeydown=e=>{if(e.key==='Enter')search();};$('#searchNumber').onkeydown=e=>{if(e.key==='Enter')search();};
   $('#librarySearch').oninput=renderLibrary;$('#librarySort').onchange=renderLibrary;$('#refreshPrices').onclick=refreshPrices;$('#startCamera').onclick=startCamera;$('#captureCard').onclick=capture;$('#retake').onclick=retake;
   $('#exportJson').onclick=exportJson;$('#exportCsv').onclick=()=>exportCsv(false);$('#exportCollectr').onclick=()=>exportCsv(true);$('#importJson').onchange=async e=>{if(e.target.files[0])try{await importBackup(e.target.files[0]);}catch(err){alert(err.message);}e.target.value='';};
   $('#clearData').onclick=async()=>{if(confirm('Delete every card in your DeckVault account collection?')){const {error}=await sb.from('collection_items').delete().eq('user_id',currentUser.id);if(error)return toast('Could not clear collection');await loadCollection();renderDashboard();renderLibrary();toast('Collection cleared');}};
   $('#priceSource').value=pricePref();$('#priceSource').onchange=e=>{localStorage.setItem('deckvault-price-source',e.target.value);toast('Price source saved');};
   window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;$('#installBtn').classList.remove('hidden');});$('#installBtn').onclick=async()=>{if(!installPrompt)return;installPrompt.prompt();await installPrompt.userChoice;installPrompt=null;$('#installBtn').classList.add('hidden');};
-  sb.auth.onAuthStateChange(async(event,session)=>{if(event==='SIGNED_OUT')showAuth();else if(session?.user&&!currentUser)await showApp(session.user);});
+  sb.auth.onAuthStateChange(async(event,session)=>{if(event==='SIGNED_OUT')showAuth();else if(session?.user&&(!currentUser||currentUser.id!==session.user.id))await showApp(session.user);});
   const {data:{session}}=await sb.auth.getSession();if(session?.user)await showApp(session.user);else showAuth();
   if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(console.warn);
 }
