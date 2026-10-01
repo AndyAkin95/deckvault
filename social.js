@@ -25,6 +25,7 @@ let marketplaceFeedRows=[];
 let mfaEnrollmentFactorId=null;
 let pendingAdminAction=null;
 let communityChannel=null, activeForumThreadId=null;
+let masterSetListCache=null,masterSetDetailCache=new Map();
 
 function marketplaceLabel(mode){
   return ({off:'Not trading',trade:'Trade only',sell:'Sell / cash only',both:'Trade + Sell'})[mode]||'Not trading';
@@ -130,6 +131,7 @@ async function loadProfileSettings(){
     $('#profileDisplayName').value=p.display_name||'';
     $('#profileBio').value=p.bio||'';
     $('#profileAvatarUrl').value=p.avatar_url||'';
+    $('#masterSetsVisibility').value=p.master_sets_visibility||'public';
     $('#marketplaceMode').value=p.marketplace_mode||'off';
     $('#marketplaceNote').value=p.marketplace_note||'';
   }
@@ -155,6 +157,7 @@ async function saveProfile(){
     display_name:$('#profileDisplayName').value.trim()||null,
     bio:$('#profileBio').value.trim()||null,
     avatar_url:$('#profileAvatarUrl').value.trim()||null,
+    master_sets_visibility:$('#masterSetsVisibility').value,
     updated_at:new Date().toISOString()
   }).eq('id',currentUser.id).select().single();
   if(error)return toast(error.code==='23505'?'Username already taken':'Could not save profile');
@@ -195,7 +198,7 @@ async function searchCommunity(){
 
 async function viewProfile(userId){
   const [{data:p,error},{data:details},{data:lists}]=await Promise.all([
-    sb.from('profiles').select('id,username,display_name,bio,avatar_url,marketplace_mode,marketplace_note').eq('id',userId).single(),
+    sb.from('profiles').select('id,username,display_name,bio,avatar_url,marketplace_mode,marketplace_note,master_sets_visibility').eq('id',userId).single(),
     sb.from('profile_details').select('field_key,field_value,visibility').eq('user_id',userId),
     sb.from('collection_lists').select('id,name,description,visibility').eq('user_id',userId).order('created_at',{ascending:false})
   ]);
@@ -205,11 +208,13 @@ async function viewProfile(userId){
   const marketBadge=p.marketplace_mode&&p.marketplace_mode!=='off'?'<span class="marketbadge '+esc(p.marketplace_mode)+'">'+esc(marketplaceLabel(p.marketplace_mode))+'</span>':'';
   box.innerHTML='<div class="profilehero">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'">':'<div class="avatarfallback large">DV</div>')+'<div><div class="eyebrow">COLLECTOR PROFILE</div><h2>@'+esc(p.username||'collector')+'</h2>'+marketBadge+'<strong>'+esc(p.display_name||'')+'</strong><p>'+esc(p.bio||'')+'</p>'+(p.marketplace_mode!=='off'&&p.marketplace_note?'<p class="marketnote">'+esc(p.marketplace_note)+'</p>':'')+'</div></div>'+
     '<div class="publicdetails">'+d.map(x=>'<div><span>'+esc(PROFILE_FIELDS.find(f=>f[0]===x.field_key)?.[1]||x.field_key)+'</span><strong>'+esc(x.field_value)+'</strong></div>').join('')+'</div>'+
+    '<div class="profilemaster"><div class="pagehead"><div><div class="eyebrow">POKÉMON CHECKLIST</div><h3>Master Sets</h3></div></div><div id="profileMasterSets"></div></div>'+
     '<h3>Public lists</h3><div id="profileLists" class="liststack"></div><div id="profileListContents"></div>';
   const lb=$('#profileLists');
   const visible=(lists||[]).filter(l=>userId===currentUser.id||l.visibility==='public');
   if(!visible.length)lb.innerHTML='<div class="empty">This collector has no public lists.</div>';
   else visible.forEach(l=>{const b=document.createElement('button');b.className='listcard';b.innerHTML='<strong>'+esc(l.name)+'</strong><span>'+esc(l.description||'')+'</span>';b.onclick=()=>viewPublicList(l);lb.appendChild(b);});
+  renderMasterSetHub(userId).catch(e=>{console.error(e);if($('#profileMasterSets'))$('#profileMasterSets').innerHTML='<div class="empty">Could not load Master Sets.</div>';});
   box.scrollIntoView({behavior:'smooth',block:'start'});
 }
 
@@ -544,6 +549,85 @@ async function sendForumReply(e){
 function openCommunity(){
   switchCommunityTab('chat');
   startCommunityRealtime();
+}
+
+
+async function allMasterSets(){
+  if(masterSetListCache)return masterSetListCache;
+  const r=await fetch(API+'/sets');if(!r.ok)throw new Error('Could not load Pokémon sets');
+  masterSetListCache=await r.json();return masterSetListCache;
+}
+async function masterSetDetail(setId){
+  if(masterSetDetailCache.has(setId))return masterSetDetailCache.get(setId);
+  const r=await fetch(API+'/sets/'+encodeURIComponent(setId));if(!r.ok)throw new Error('Could not load set');
+  const data=await r.json();masterSetDetailCache.set(setId,data);return data;
+}
+async function syncLibraryToMasterSets(){
+  if(!currentUser||!items?.length)return;
+  const rows=[...new Map(items.filter(x=>x.game==='pokemon'&&x.setId&&x.cardId&&!String(x.cardId).startsWith('manual:')).map(x=>[x.setId+'|'+x.cardId,{user_id:currentUser.id,game:'pokemon',set_id:x.setId,card_id:x.cardId}])).values()];
+  if(rows.length)await sb.from('master_set_cards').upsert(rows,{onConflict:'user_id,game,set_id,card_id'});
+}
+async function masterOwnedMap(userId){
+  const {data,error}=await sb.from('master_set_cards').select('set_id,card_id').eq('user_id',userId).eq('game','pokemon');
+  if(error)return new Map();
+  const map=new Map();
+  (data||[]).forEach(r=>{if(!map.has(r.set_id))map.set(r.set_id,new Set());map.get(r.set_id).add(r.card_id);});
+  return map;
+}
+async function renderMasterSetHub(userId){
+  const box=$('#profileMasterSets');if(!box)return;
+  box.innerHTML='<div class="empty">Loading Pokémon sets…</div>';
+  const mine=userId===currentUser.id;
+  if(mine)await syncLibraryToMasterSets();
+  const [{data:p},sets,owned]=await Promise.all([
+    sb.from('profiles').select('master_sets_visibility').eq('id',userId).single(),
+    allMasterSets(),
+    masterOwnedMap(userId)
+  ]);
+  if(!mine&&p?.master_sets_visibility!=='public'){box.innerHTML='<div class="empty">This collector keeps Master Sets private.</div>';return;}
+  box.innerHTML='<div class="mastersettools"><input id="masterSetSearch" placeholder="Search Pokémon sets…"><span id="masterSetCount" class="pill"></span></div><div id="masterSetGrid" class="mastersetgrid"></div><div id="masterSetCardsView"></div>';
+  const render=()=>{
+    const q=$('#masterSetSearch').value.trim().toLowerCase();
+    const filtered=(sets||[]).filter(s=>!q||String(s.name||'').toLowerCase().includes(q));
+    $('#masterSetCount').textContent=filtered.length+' sets';
+    const grid=$('#masterSetGrid');grid.innerHTML='';
+    filtered.forEach(set=>{
+      const n=(owned.get(set.id)||new Set()).size,total=Number(set.cardCount?.total||0);
+      const b=document.createElement('button');b.className='mastersettile';
+      const logo=set.logo?'<img loading="lazy" src="'+esc(set.logo)+'.webp" alt="">':'<div class="setlogofallback">Pokémon</div>';
+      b.innerHTML=logo+'<div><strong>'+esc(set.name)+'</strong><span>'+n+' / '+total+' owned</span><div class="setprogress"><i style="width:'+(total?Math.min(100,n/total*100):0)+'%"></i></div></div>';
+      b.onclick=()=>openMasterSet(userId,set,owned);
+      grid.appendChild(b);
+    });
+  };
+  $('#masterSetSearch').oninput=render;render();
+}
+async function openMasterSet(userId,setBrief,ownedMap){
+  const host=$('#profileMasterSets');if(!host)return;
+  const set=await masterSetDetail(setBrief.id),mine=userId===currentUser.id;
+  const owned=ownedMap.get(set.id)||new Set();
+  host.innerHTML='<div class="mastersethead"><button id="masterSetBack" class="ghost" type="button">← All sets</button><div><div class="eyebrow">MASTER SET</div><h3>'+esc(set.name)+'</h3><span id="masterSetProgressText">'+owned.size+' / '+Number(set.cardCount?.total||set.cards?.length||0)+' owned</span></div></div><div id="masterSetCardGrid" class="mastercardgrid"></div>';
+  $('#masterSetBack').onclick=()=>renderMasterSetHub(userId);
+  const grid=$('#masterSetCardGrid');
+  (set.cards||[]).forEach(card=>{
+    const isOwned=owned.has(card.id);
+    const b=document.createElement('button');b.className='mastercard '+(isOwned?'owned':'missing');
+    b.type='button';b.disabled=!mine;
+    b.innerHTML='<div class="mastercardimg"><img loading="lazy" src="'+esc(imageUrl(card.image))+'" alt="'+esc(card.name)+'"><span class="mastercheck">✓</span></div><strong>'+esc(card.name)+'</strong><span>#'+esc(card.localId)+'</span>';
+    if(mine)b.onclick=async()=>{
+      if(owned.has(card.id)){
+        const {error}=await sb.from('master_set_cards').delete().eq('user_id',currentUser.id).eq('game','pokemon').eq('set_id',set.id).eq('card_id',card.id);
+        if(error)return toast('Could not update Master Set');
+        owned.delete(card.id);b.classList.remove('owned');b.classList.add('missing');
+      }else{
+        const {error}=await sb.from('master_set_cards').insert({user_id:currentUser.id,game:'pokemon',set_id:set.id,card_id:card.id});
+        if(error)return toast('Could not update Master Set');
+        owned.add(card.id);b.classList.remove('missing');b.classList.add('owned');
+      }
+      $('#masterSetProgressText').textContent=owned.size+' / '+Number(set.cardCount?.total||set.cards?.length||0)+' owned';
+    };
+    grid.appendChild(b);
+  });
 }
 
 async function checkAdminMfa(){
