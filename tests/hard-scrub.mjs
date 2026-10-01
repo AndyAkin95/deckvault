@@ -29,10 +29,13 @@ function staticAudit() {
     assert(!nativeBad.length, name+' uses querySelector as a collection: '+nativeBad.join(', '));
   }
 
-  const boundIds=[
-    ...app.matchAll(/\$\('#([^']+)'\)\.(?:onclick|onsubmit|onchange|oninput|onkeydown)\s*=/g),
-    ...social.matchAll(/\$\('#([^']+)'\)\.(?:onclick|onsubmit|onchange|oninput|onkeydown)\s*=/g)
-  ].map(m=>m[1]);
+  const appInitStart=app.indexOf('async function init(){');
+  const appInitEnd=app.indexOf("document.addEventListener('DOMContentLoaded'",appInitStart);
+  const appInit=appInitStart>=0?app.slice(appInitStart,appInitEnd):'';
+  const socialInitStart=social.lastIndexOf("document.addEventListener('DOMContentLoaded'");
+  const socialInit=socialInitStart>=0?social.slice(socialInitStart):'';
+  const startupSource=appInit+'\n'+socialInit;
+  const boundIds=[...startupSource.matchAll(/\$\('#([^']+)'\)\.(?:onclick|onsubmit|onchange|oninput|onkeydown)\s*=/g)].map(m=>m[1]);
   const missing=[...new Set(boundIds)].filter(id=>!html.includes('id="'+id+'"'));
   assert(!missing.length,'Startup-bound IDs missing from HTML: '+missing.join(', '));
 
