@@ -10,9 +10,24 @@ const money=(n,c='USD')=>n==null||Number.isNaN(Number(n))?'—':new Intl.NumberF
 const imageUrl=(base,q='low')=>base?base+'/'+q+'.webp':'';
 function toast(m){const e=$('#toast');e.textContent=m;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),1800);}
 function setAuthMessage(m,bad=false){const e=$('#authMessage');e.textContent=m||'';e.classList.toggle('error',bad);}
-function showPane(id){['signinPane','signupPane','resetPane'].forEach(x=>$('#'+x).classList.toggle('hidden',x!==id));setAuthMessage('');}
+function showPane(id){['signinPane','signupPane','applicationPane','resetPane'].forEach(x=>{const e=$('#'+x);if(e)e.classList.toggle('hidden',x!==id);});setAuthMessage('');}
 function showAuth(){currentUser=null;$('#authGate').classList.remove('hidden');$('#appShell').classList.add('hidden');}
-async function showApp(user){currentUser=user;$('#authGate').classList.add('hidden');$('#appShell').classList.remove('hidden');$('#accountChip').textContent=user.email||'Signed in';$('#accountEmail').textContent=user.email||'';await loadCollection();renderDashboard();renderLibrary();}
+async function showApp(user){
+  const {data:approved,error:approvalError}=await sb.from('approved_users').select('user_id').eq('user_id',user.id).maybeSingle();
+  if(approvalError||!approved){
+    await sb.auth.signOut();
+    showAuth();
+    setAuthMessage('This account has not been approved for DeckVault yet.',true);
+    return false;
+  }
+  currentUser=user;
+  $('#authGate').classList.add('hidden');
+  $('#appShell').classList.remove('hidden');
+  $('#accountChip').textContent=user.email||'Signed in';
+  $('#accountEmail').textContent=user.email||'';
+  await loadCollection();renderDashboard();renderLibrary();
+  return true;
+}
 async function loadCollection(){
   if(!currentUser){items=[];return;}
   const {data,error}=await sb.from('collection_items').select('*').order('added_at',{ascending:false});
@@ -22,7 +37,7 @@ async function loadCollection(){
 function fromRow(r){return {id:r.id,game:r.game,cardId:r.card_id,name:r.name,localId:r.local_id,setId:r.set_id,setName:r.set_name,rarity:r.rarity,variant:r.variant,condition:r.condition,language:r.language,quantity:r.quantity,image:r.image_url,price:r.price==null?null:Number(r.price),priceCurrency:r.price_currency,priceSource:r.price_source,priceUpdatedAt:r.price_updated_at,notes:r.notes||'',addedAt:r.added_at,updatedAt:r.updated_at};}
 function toRow(x){return {user_id:currentUser.id,game:x.game,card_id:x.cardId,name:x.name,local_id:x.localId,set_id:x.setId,set_name:x.setName,rarity:x.rarity,variant:x.variant,condition:x.condition,language:x.language,quantity:x.quantity,image_url:x.image,price:x.price,price_currency:x.priceCurrency,price_source:x.priceSource,price_updated_at:x.priceUpdatedAt,notes:x.notes||'',updated_at:new Date().toISOString()};}
 async function signIn(e){e.preventDefault();setAuthMessage('Signing in…');const {data,error}=await sb.auth.signInWithPassword({email:$('#signInEmail').value.trim(),password:$('#signInPassword').value});if(error)return setAuthMessage(error.message,true);await showApp(data.user);}
-async function signUp(e){e.preventDefault();const p=$('#signUpPassword').value;if(p!==$('#signUpPassword2').value)return setAuthMessage('Passwords do not match.',true);setAuthMessage('Creating account…');const {data,error}=await sb.auth.signUp({email:$('#signUpEmail').value.trim(),password:p});if(error)return setAuthMessage(error.message,true);if(data.session&&data.user){await showApp(data.user);toast('Account created');}else{showPane('signinPane');setAuthMessage('Account created. Check your email to confirm your address, then sign in.');}}
+async function signUp(e){e.preventDefault();showPane('applicationPane');setAuthMessage('New DeckVault accounts require administrator approval.');}
 async function resetPassword(e){e.preventDefault();setAuthMessage('Sending recovery email…');const {error}=await sb.auth.resetPasswordForEmail($('#resetEmail').value.trim(),{redirectTo:location.origin+location.pathname});if(error)return setAuthMessage(error.message,true);setAuthMessage('Recovery email sent.');}
 async function signOut(){await sb.auth.signOut();items=[];showAuth();}
 
@@ -55,7 +70,7 @@ async function importBackup(file){const d=JSON.parse(await file.text());if(!d||!
 async function init(){
   $$('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
   $('#signInForm').onsubmit=signIn;$('#signUpForm').onsubmit=signUp;$('#resetForm').onsubmit=resetPassword;
-  $('#showSignUp').onclick=()=>showPane('signupPane');$('#showSignIn').onclick=()=>showPane('signinPane');$('#showReset').onclick=()=>showPane('resetPane');$('#resetBack').onclick=()=>showPane('signinPane');
+  $('#showSignUp').onclick=()=>showPane('applicationPane');$('#showSignIn').onclick=()=>showPane('signinPane');$('#showReset').onclick=()=>showPane('resetPane');$('#resetBack').onclick=()=>showPane('signinPane');
   $('#signOutBtn').onclick=signOut;$('#searchBtn').onclick=search;$('#searchName').onkeydown=e=>{if(e.key==='Enter')search();};$('#searchNumber').onkeydown=e=>{if(e.key==='Enter')search();};
   $('#librarySearch').oninput=renderLibrary;$('#librarySort').onchange=renderLibrary;$('#refreshPrices').onclick=refreshPrices;$('#startCamera').onclick=startCamera;$('#captureCard').onclick=capture;$('#retake').onclick=retake;
   $('#exportJson').onclick=exportJson;$('#exportCsv').onclick=()=>exportCsv(false);$('#exportCollectr').onclick=()=>exportCsv(true);$('#importJson').onchange=async e=>{if(e.target.files[0])try{await importBackup(e.target.files[0]);}catch(err){alert(err.message);}e.target.value='';};
