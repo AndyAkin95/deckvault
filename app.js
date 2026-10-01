@@ -684,11 +684,24 @@ async function startCamera(){try{if(stream)stream.getTracks().forEach(t=>t.stop(
 function capture(){const v=$('#video');if(!v.videoWidth)return;const c=$('#canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0,c.width,c.height);$('#capturePreview').src=c.toDataURL('image/jpeg',.9);$('#capturePreview').classList.remove('hidden');v.classList.add('hidden');$('#captureCard').classList.add('hidden');$('#retake').classList.remove('hidden');$('#cameraStatus').textContent='Captured';stopActiveScan(false);}
 function retake(){$('#capturePreview').classList.add('hidden');$('#video').classList.remove('hidden');$('#captureCard').classList.remove('hidden');$('#retake').classList.add('hidden');$('#cameraStatus').textContent='Camera ready';}
 
+async function loadTesseract(){
+  if(window.Tesseract)return window.Tesseract;
+  if(window.__deckvaultTesseractPromise)return window.__deckvaultTesseractPromise;
+  window.__deckvaultTesseractPromise=new Promise((resolve,reject)=>{
+    const script=document.createElement('script');
+    script.src='https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js';
+    script.async=true;
+    script.onload=()=>window.Tesseract?resolve(window.Tesseract):reject(new Error('OCR engine did not initialize'));
+    script.onerror=()=>reject(new Error('OCR engine could not be downloaded'));
+    document.head.appendChild(script);
+  });
+  return window.__deckvaultTesseractPromise;
+}
 async function ensureActiveScanWorker(){
   if(activeScanWorker)return activeScanWorker;
-  if(!window.Tesseract)throw new Error('OCR engine failed to load');
+  const T=await loadTesseract();
   $('#activeScanStatus').textContent='Loading OCR engine for the first scan…';
-  activeScanWorker=await Tesseract.createWorker('eng',1,{
+  activeScanWorker=await T.createWorker('eng',1,{
     logger:m=>{
       if(m.status==='recognizing text'&&activeScanRunning)$('#activeScanStatus').textContent='Reading card number… '+Math.round((m.progress||0)*100)+'%';
     }
@@ -820,8 +833,18 @@ async function exportJson(){download(JSON.stringify({format:'deckvault-backup',v
 async function exportCsv(collectr){const cols=collectr?['Game','Card Name','Set','Card Number','Variant','Condition','Language','Quantity','Provider ID','Current Price','Currency']:['Game','Name','Set','Set ID','Card Number','Variant','Condition','Language','Quantity','Rarity','Provider ID','Price','Price Paid','Currency','Price Source','Added At','Updated At','Notes'];const rows=items.map(x=>collectr?[x.game,x.name,x.setName,x.localId,x.variant,x.condition,x.language,x.quantity,x.cardId,x.price||'',x.priceCurrency||'']:[x.game,x.name,x.setName,x.setId,x.localId,x.variant,x.condition,x.language,x.quantity,x.rarity,x.cardId,x.price||'',x.pricePaid??'',x.priceCurrency||'',x.priceSource||'',x.addedAt,x.updatedAt,x.notes||'']);download([cols,...rows].map(r=>r.map(csv).join(',')).join('\n'),'text/csv;charset=utf-8',(collectr?'deckvault-collectr-transfer-':'deckvault-collection-')+new Date().toISOString().slice(0,10)+'.csv');}
 async function importBackup(file){const d=JSON.parse(await file.text());if(!d||!Array.isArray(d.collection))throw new Error('Not a valid DeckVault backup.');if(!confirm('Restore '+d.collection.length+' entries to this account?'))return;for(const x of d.collection){const cardId=x.cardId||x.card_id;if(!cardId)continue;const variant=x.variant||'Normal',condition=x.condition||'Near Mint',language=x.language||'English';const old=items.find(i=>i.game===(x.game||'pokemon')&&i.cardId===cardId&&i.variant===variant&&i.condition===condition&&i.language===language);const obj={game:x.game||'pokemon',cardId,name:x.name||'',localId:x.localId||x.local_id||'',setId:x.setId||x.set_id||'',setName:x.setName||x.set_name||'',rarity:x.rarity||'',variant,condition,language,quantity:Number(x.quantity||1),image:x.image||x.image_url||'',price:x.price==null?null:Number(x.price),pricePaid:(x.pricePaid??x.price_paid)==null?null:Number(x.pricePaid??x.price_paid),priceCurrency:x.priceCurrency||x.price_currency||'USD',priceSource:x.priceSource||x.price_source||'',priceUpdatedAt:x.priceUpdatedAt||x.price_updated_at||null,entrySource:x.entrySource||x.entry_source||'provider',notes:x.notes||'',addedAt:x.addedAt||x.added_at||new Date().toISOString()};if(old)await sb.from('collection_items').update(toRow({...obj,id:old.id})).eq('id',old.id);else await sb.from('collection_items').insert({...toRow(obj),added_at:obj.addedAt});}await loadCollection();renderDashboard();renderLibrary();toast('Backup restored');}
 
+function showStartupError(error){
+  console.error('DeckVault startup error',error);
+  const box=$('#startupError');
+  if(!box)return;
+  $('#startupErrorText').textContent=error?.message||String(error||'Unknown startup error');
+  box.classList.remove('hidden');
+}
+window.addEventListener('error',e=>showStartupError(e.error||e.message));
+window.addEventListener('unhandledrejection',e=>showStartupError(e.reason));
 async function init(){
-  $$('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
+  $('#startupReloadBtn').onclick=()=>location.reload();
+  $('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
   $('#signInForm').onsubmit=signIn;$('#signUpForm').onsubmit=signUp;$('#resetForm').onsubmit=resetPassword;
   $('#staySignedIn').checked=localStorage.getItem(STAY_SIGNED_IN_KEY)==='true';
   $('#staySignedIn').onchange=e=>localStorage.setItem(STAY_SIGNED_IN_KEY,e.target.checked?'true':'false');
@@ -865,5 +888,5 @@ async function init(){
   const {data:{session}}=await sb.auth.getSession();if(session?.user)await showApp(session.user);else showAuth();
   if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(console.warn);
 }
-document.addEventListener('DOMContentLoaded',init);
+document.addEventListener('DOMContentLoaded',()=>init().catch(showStartupError));
 window.addEventListener('pagehide',()=>{if(stream)stream.getTracks().forEach(t=>t.stop());});
