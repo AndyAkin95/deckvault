@@ -1057,7 +1057,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   $('#saveProfileDetailsBtn').onclick=saveProfileDetails;
   $('#createListBtn').onclick=createList;
   $('#communitySearchBtn').onclick=searchCommunity;
-  $document.querySelectorAll('[data-community-tab]').forEach(b=>b.onclick=()=>switchCommunityTab(b.dataset.communityTab));
+  document.querySelectorAll('[data-community-tab]').forEach(b=>b.onclick=()=>switchCommunityTab(b.dataset.communityTab));
   $('#communityChatForm').onsubmit=sendCommunityMessage;
   $('#refreshChatBtn').onclick=loadCommunityChat;
   $('#privateMessageForm').onsubmit=sendPrivateMessage;
