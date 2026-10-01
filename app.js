@@ -2,7 +2,32 @@
 const API='https://api.tcgdex.net/v2/en';
 const SUPABASE_URL='https://lretqhaattgtwpfwsxbc.supabase.co';
 const SUPABASE_KEY='sb_publishable_6ntpA39F6O2fbB8wavLzoA_acDIJfrm';
-const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+const STAY_SIGNED_IN_KEY='deckvault-stay-signed-in';
+const authStorage={
+  getItem(key){
+    const stay=localStorage.getItem(STAY_SIGNED_IN_KEY)==='true';
+    return (stay?localStorage:sessionStorage).getItem(key);
+  },
+  setItem(key,value){
+    const stay=localStorage.getItem(STAY_SIGNED_IN_KEY)==='true';
+    const target=stay?localStorage:sessionStorage;
+    const other=stay?sessionStorage:localStorage;
+    target.setItem(key,value);
+    other.removeItem(key);
+  },
+  removeItem(key){
+    localStorage.removeItem(key);
+    sessionStorage.removeItem(key);
+  }
+};
+const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{
+  auth:{
+    persistSession:true,
+    autoRefreshToken:true,
+    detectSessionInUrl:true,
+    storage:authStorage
+  }
+});
 let currentUser=null, currentCard=null, stream=null, installPrompt=null, items=[];
 const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -97,6 +122,8 @@ function fromRow(r){return {id:r.id,game:r.game,cardId:r.card_id,name:r.name,loc
 function toRow(x){return {user_id:currentUser.id,game:x.game,card_id:x.cardId,name:x.name,local_id:x.localId,set_id:x.setId,set_name:x.setName,rarity:x.rarity,variant:x.variant,condition:x.condition,language:x.language,quantity:x.quantity,image_url:x.image,price:x.price,price_currency:x.priceCurrency,price_source:x.priceSource,price_updated_at:x.priceUpdatedAt,notes:x.notes||'',updated_at:new Date().toISOString()};}
 async function signIn(e){
   e.preventDefault();
+  const stay=$('#staySignedIn')?.checked===true;
+  localStorage.setItem(STAY_SIGNED_IN_KEY,stay?'true':'false');
   setAuthMessage('Signing in…');
   try{
     const {data,error}=await sb.auth.signInWithPassword({
@@ -144,6 +171,8 @@ async function importBackup(file){const d=JSON.parse(await file.text());if(!d||!
 async function init(){
   $$('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
   $('#signInForm').onsubmit=signIn;$('#signUpForm').onsubmit=signUp;$('#resetForm').onsubmit=resetPassword;
+  $('#staySignedIn').checked=localStorage.getItem(STAY_SIGNED_IN_KEY)==='true';
+  $('#staySignedIn').onchange=e=>localStorage.setItem(STAY_SIGNED_IN_KEY,e.target.checked?'true':'false');
   $('#showSignUp').onclick=()=>showPane('applicationPane');$('#showSignIn').onclick=()=>showPane('signinPane');$('#showReset').onclick=()=>showPane('resetPane');$('#resetBack').onclick=()=>showPane('signinPane');
   $('#signOutBtn').onclick=signOut;$('#bannedSignOut').onclick=signOut;$('#termsSignOut').onclick=signOut;
   $('#viewTermsAuth').onclick=openTermsDialog;$('#viewTermsBtn').onclick=openTermsDialog;
