@@ -448,7 +448,7 @@ async function profileMapFor(userIds){
   return Object.fromEntries((data||[]).map(p=>[p.id,p]));
 }
 function switchCommunityTab(tab){
-  $('[data-community-tab]').forEach(b=>b.classList.toggle('active',b.dataset.communityTab===tab));
+  document.querySelectorAll('[data-community-tab]').forEach(b=>b.classList.toggle('active',b.dataset.communityTab===tab));
   $('#communityChatPane').classList.toggle('active',tab==='chat');
   $('#communityMessagesPane').classList.toggle('active',tab==='messages');
   $('#communityForumsPane').classList.toggle('active',tab==='forums');
@@ -699,7 +699,7 @@ function switchSettingsSection(section){
   const allowed=[...select.options].map(o=>o.value);
   if(!allowed.includes(section))section='account';
   select.value=section;
-  $('[data-settings-pane]').forEach(p=>p.classList.toggle('active',p.dataset.settingsPane===section));
+  document.querySelectorAll('[data-settings-pane]').forEach(p=>p.classList.toggle('active',p.dataset.settingsPane===section));
   $('#settingsSectionHint').textContent=SETTINGS_HINTS[section]||'';
   if(section==='admin'&&isAdmin)Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit()]);
 }
@@ -1057,7 +1057,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   $('#saveProfileDetailsBtn').onclick=saveProfileDetails;
   $('#createListBtn').onclick=createList;
   $('#communitySearchBtn').onclick=searchCommunity;
-  $$('[data-community-tab]').forEach(b=>b.onclick=()=>switchCommunityTab(b.dataset.communityTab));
+  $document.querySelectorAll('[data-community-tab]').forEach(b=>b.onclick=()=>switchCommunityTab(b.dataset.communityTab));
   $('#communityChatForm').onsubmit=sendCommunityMessage;
   $('#refreshChatBtn').onclick=loadCommunityChat;
   $('#privateMessageForm').onsubmit=sendPrivateMessage;
