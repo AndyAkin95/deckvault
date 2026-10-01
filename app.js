@@ -867,7 +867,7 @@ async function addCurrent(){
   await loadCollection();await loadFolders();saveOfflineSnapshot();renderDashboard();renderLibrary();haptic();toast(currentCard.name+' saved');
 }
 function rowFor(x,compact){
-  const e=document.createElement('div');e.className='cardrow';const total=(Number(x.price)||0)*(Number(x.quantity)||0);
+  const e=document.createElement('div');e.className='cardrow';const total=effectivePrice(x)*Number(x.quantity||0);
   const grade=x.cardState==='graded'&&x.gradingCompany?(' • '+x.gradingCompany+' '+(x.grade||'')):'';
   e.innerHTML='<img loading="lazy" src="'+esc(imageUrl(x.image))+'"><div class="cardmain"><div class="cardtitle">'+esc(x.name)+'</div><div class="cardmeta">'+esc(x.setName)+' • #'+esc(x.localId)+' • '+esc(x.variant)+' • '+esc(x.condition)+esc(grade)+'</div>'+(compact?'':'<div class="qty"><button data-a="dec">−</button><span>'+x.quantity+'</span><button data-a="inc">+</button><button data-a="del">×</button></div>')+'</div><div class="cardprice">'+money(total,x.priceCurrency||'USD')+'<div class="cardmeta">×'+x.quantity+'</div></div>';
   if(!compact){e.querySelector('[data-a="inc"]').onclick=()=>adjust(x,1);e.querySelector('[data-a="dec"]').onclick=()=>adjust(x,-1);e.querySelector('[data-a="del"]').onclick=()=>removeEntry(x);}
@@ -933,7 +933,7 @@ async function renderDashboardExtras(){
 }
 function renderDashboard(){
   const count=items.reduce((sum,x)=>sum+Number(x.quantity||0),0);
-  const total=items.reduce((sum,x)=>sum+((x.priceCurrency==='USD'||!x.priceCurrency)?Number(x.price||0)*Number(x.quantity||0):0),0);
+  const total=items.reduce((sum,x)=>sum+((x.priceCurrency==='USD'||!x.priceCurrency)?effectivePrice(x)*Number(x.quantity||0):0),0);
   const spent=items.reduce((sum,x)=>sum+(x.pricePaid==null?0:Number(x.pricePaid)*Number(x.quantity||0)),0);
   const gain=total-spent,pct=spent?gain/spent*100:0;
   const top=[...items].sort((a,b)=>effectivePrice(b)*b.quantity-effectivePrice(a)*a.quantity)[0];
