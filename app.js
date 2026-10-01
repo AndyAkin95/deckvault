@@ -29,6 +29,8 @@ const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{
   }
 });
 let currentUser=null, currentCard=null, stream=null, installPrompt=null, items=[];
+let offlineMode=false,offlineSnapshotAt=null;
+const OFFLINE_CACHE_VERSION=1;
 let activeScanWorker=null,activeScanRunning=false,activeScanBusy=false,activeScanTimer=null,activeScanMatch=null,activeScanRejected=null,pokemonSetCache=null;
 let folders=[], folderMembership=new Map(), activeFolderId=null, folderAssignItemId=null;
 const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
@@ -50,6 +52,81 @@ function showAuth(){
   hideAccessGates();
   $('#authGate').classList.remove('hidden');
 }
+
+function offlineCacheKey(userId){return 'deckvault-offline-v'+OFFLINE_CACHE_VERSION+':'+userId;}
+function serializeFolderMembership(){
+  return [...folderMembership.entries()].map(([folderId,set])=>[folderId,[...set]]);
+}
+function saveOfflineSnapshot(){
+  if(!currentUser||offlineMode)return;
+  try{
+    const snapshot={
+      version:OFFLINE_CACHE_VERSION,
+      userId:currentUser.id,
+      email:currentUser.email||'',
+      savedAt:new Date().toISOString(),
+      items,
+      folders,
+      folderMembership:serializeFolderMembership()
+    };
+    localStorage.setItem(offlineCacheKey(currentUser.id),JSON.stringify(snapshot));
+    offlineSnapshotAt=snapshot.savedAt;
+  }catch(e){console.warn('Offline snapshot could not be saved',e);}
+}
+function readOfflineSnapshot(userId){
+  try{
+    const raw=localStorage.getItem(offlineCacheKey(userId));
+    if(!raw)return null;
+    const data=JSON.parse(raw);
+    if(!data||data.userId!==userId||!Array.isArray(data.items))return null;
+    return data;
+  }catch(e){console.warn('Offline snapshot could not be read',e);return null;}
+}
+function restoreOfflineSnapshot(snapshot){
+  items=Array.isArray(snapshot?.items)?snapshot.items:[];
+  folders=Array.isArray(snapshot?.folders)?snapshot.folders:[];
+  folderMembership=new Map((snapshot?.folderMembership||[]).map(([id,ids])=>[id,new Set(ids||[])]));
+  offlineSnapshotAt=snapshot?.savedAt||null;
+  if(activeFolderId&&!folders.some(f=>f.id===activeFolderId))activeFolderId=null;
+  renderFolderChips();
+  populateManualFolderSelect();
+}
+function setOfflineMode(enabled,savedAt=null){
+  offlineMode=!!enabled;
+  document.body.classList.toggle('offline-mode',offlineMode);
+  const banner=$('#offlineBanner');
+  if(banner){
+    banner.classList.toggle('hidden',!offlineMode);
+    $('#offlineSavedAt').textContent=offlineMode&&savedAt?'Last synced '+new Date(savedAt).toLocaleString():'';
+  }
+  ['lookup','scanner','marketplace','community'].forEach(view=>{
+    $('[data-go="'+view+'"]').forEach(b=>b.disabled=offlineMode);
+  });
+  if($('#accountChip')&&currentUser)$('#accountChip').textContent=(currentUser.email||'Signed in')+(offlineMode?' • Offline':'');
+}
+function requireOnline(message='This action needs an internet connection.'){
+  if(offlineMode||!navigator.onLine){toast(message+' Offline mode is read-only.');return false;}
+  return true;
+}
+function isConnectivityError(error){
+  const m=String(error?.message||error||'').toLowerCase();
+  return !navigator.onLine||m.includes('failed to fetch')||m.includes('network')||m.includes('load failed')||m.includes('fetch');
+}
+async function showOfflineApp(user){
+  const snapshot=readOfflineSnapshot(user.id);
+  if(!snapshot)return false;
+  currentUser=user;
+  hideAccessGates();
+  restoreOfflineSnapshot(snapshot);
+  $('#authGate').classList.add('hidden');
+  $('#appShell').classList.remove('hidden');
+  $('#accountEmail').textContent=user.email||snapshot.email||'';
+  setOfflineMode(true,snapshot.savedAt);
+  renderDashboard();renderLibrary();
+  if(!document.querySelector('.view.active')||['lookup','scanner','marketplace','community'].includes(document.querySelector('.view.active')?.id))go('library');
+  return true;
+}
+
 async function getCurrentTerms(){
   const {data,error}=await sb.from('legal_documents').select('version,title,body,effective_at').eq('document_key','terms').eq('is_current',true).single();
   if(error)throw error;
@@ -81,48 +158,70 @@ async function showApp(user,termsJustAccepted=false){
   currentUser=user;
   hideAccessGates();
 
-  const {data:ban,error:banError}=await sb.from('user_bans').select('reason,banned_at,active').eq('user_id',user.id).eq('active',true).maybeSingle();
-  if(!banError&&ban){
-    $('#authGate').classList.add('hidden');
-    $('#banReason').textContent=ban.reason||'Account access has been suspended.';
-    $('#banDate').textContent=ban.banned_at?'Banned '+new Date(ban.banned_at).toLocaleString():'';
-    $('#bannedGate').classList.remove('hidden');
-    return false;
-  }
-
-  const {data:approved,error:approvalError}=await sb.from('approved_users').select('user_id').eq('user_id',user.id).maybeSingle();
-  if(approvalError||!approved){
-    await sb.auth.signOut();
+  if(!navigator.onLine){
+    if(await showOfflineApp(user))return true;
     showAuth();
-    setAuthMessage('This account has not been approved for DeckVault yet.',true);
+    setAuthMessage('DeckVault is offline and this account does not have a saved offline library yet.',true);
     return false;
   }
 
-  const doc=await getCurrentTerms();
-  const {data:accepted}=await sb.from('terms_acceptances').select('terms_version').eq('user_id',user.id).eq('terms_version',doc.version).maybeSingle();
-  if(!accepted&&!termsJustAccepted){
+  try{
+    const {data:ban,error:banError}=await sb.from('user_bans').select('reason,banned_at,active').eq('user_id',user.id).eq('active',true).maybeSingle();
+    if(banError)throw banError;
+    if(ban){
+      $('#authGate').classList.add('hidden');
+      $('#banReason').textContent=ban.reason||'Account access has been suspended.';
+      $('#banDate').textContent=ban.banned_at?'Banned '+new Date(ban.banned_at).toLocaleString():'';
+      $('#bannedGate').classList.remove('hidden');
+      return false;
+    }
+
+    const {data:approved,error:approvalError}=await sb.from('approved_users').select('user_id').eq('user_id',user.id).maybeSingle();
+    if(approvalError)throw approvalError;
+    if(!approved){
+      await sb.auth.signOut();
+      showAuth();
+      setAuthMessage('This account has not been approved for DeckVault yet.',true);
+      return false;
+    }
+
+    const doc=await getCurrentTerms();
+    const {data:accepted,error:acceptedError}=await sb.from('terms_acceptances').select('terms_version').eq('user_id',user.id).eq('terms_version',doc.version).maybeSingle();
+    if(acceptedError)throw acceptedError;
+    if(!accepted&&!termsJustAccepted){
+      $('#authGate').classList.add('hidden');
+      $('#termsGateVersion').textContent='Version '+doc.version+' • Effective '+new Date(doc.effective_at).toLocaleDateString();
+      renderTerms($('#termsGateBody'),doc);
+      $('#acceptTermsCheck').checked=false;
+      $('#acceptTermsBtn').disabled=true;
+      $('#termsGate').classList.remove('hidden');
+      return false;
+    }
+
     $('#authGate').classList.add('hidden');
-    $('#termsGateVersion').textContent='Version '+doc.version+' • Effective '+new Date(doc.effective_at).toLocaleDateString();
-    renderTerms($('#termsGateBody'),doc);
-    $('#acceptTermsCheck').checked=false;
-    $('#acceptTermsBtn').disabled=true;
-    $('#termsGate').classList.remove('hidden');
-    return false;
+    $('#appShell').classList.remove('hidden');
+    $('#accountChip').textContent=user.email||'Signed in';
+    $('#accountEmail').textContent=user.email||'';
+    setOfflineMode(false);
+    const collectionOK=await loadCollection();
+    const foldersOK=await loadFolders();
+    if(collectionOK===false||foldersOK===false)throw new Error('Network data load failed');
+    saveOfflineSnapshot();
+    renderDashboard();renderLibrary();
+    if(window.refreshSocialState)setTimeout(()=>window.refreshSocialState(),50);
+    return true;
+  }catch(e){
+    console.warn('Online app load failed',e);
+    if(isConnectivityError(e)&&await showOfflineApp(user))return true;
+    throw e;
   }
-
-  $('#authGate').classList.add('hidden');
-  $('#appShell').classList.remove('hidden');
-  $('#accountChip').textContent=user.email||'Signed in';
-  $('#accountEmail').textContent=user.email||'';
-  await loadCollection();await loadFolders();renderDashboard();renderLibrary();
-  if(window.refreshSocialState)setTimeout(()=>window.refreshSocialState(),50);
-  return true;
 }
 async function loadCollection(){
-  if(!currentUser){items=[];return;}
+  if(!currentUser){items=[];return true;}
   const {data,error}=await sb.from('collection_items').select('*').eq('user_id',currentUser.id).order('added_at',{ascending:false});
-  if(error){console.error(error);toast('Could not load collection');return;}
+  if(error){console.error(error);return false;}
   items=(data||[]).map(fromRow);
+  return true;
 }
 async function loadFolders(){
   if(!currentUser){folders=[];folderMembership=new Map();return;}
@@ -130,7 +229,7 @@ async function loadFolders(){
     sb.from('collection_folders').select('*').eq('user_id',currentUser.id).order('name'),
     sb.from('collection_folder_items').select('folder_id,collection_item_id')
   ]);
-  if(fRes.error||mRes.error){console.error(fRes.error||mRes.error);toast('Could not load library folders');return;}
+  if(fRes.error||mRes.error){console.error(fRes.error||mRes.error);return false;}
   folders=fRes.data||[];
   folderMembership=new Map();
   (mRes.data||[]).forEach(row=>{
@@ -140,6 +239,7 @@ async function loadFolders(){
   if(activeFolderId&&!folders.some(f=>f.id===activeFolderId))activeFolderId=null;
   renderFolderChips();
   populateManualFolderSelect();
+  return true;
 }
 
 function folderItems(folderId){
@@ -169,7 +269,7 @@ function populateManualFolderSelect(){
   const sel=$('#manualFolder');if(!sel)return;
   sel.innerHTML='<option value="">Main Library only</option>'+folders.map(f=>'<option value="'+esc(f.id)+'">'+esc(f.name)+'</option>').join('');
 }
-async function createFolder(){
+async function createFolder(){if(!requireOnline('Creating folders needs an internet connection.'))return;
   const name=prompt('Folder name');
   if(!name||!name.trim())return;
   const {error}=await sb.from('collection_folders').insert({user_id:currentUser.id,name:name.trim()});
@@ -212,7 +312,7 @@ function openFolderAssignments(item){
   });
   $('#folderAssignDialog').showModal();
 }
-async function saveFolderAssignments(){
+async function saveFolderAssignments(){if(!requireOnline('Changing folders needs an internet connection.'))return;
   if(!folderAssignItemId)return;
   const selected=$('#folderAssignOptions input:checked').map(x=>x.value);
   for(const folder of folders){
@@ -232,7 +332,7 @@ function openManualCard(){
   populateManualFolderSelect();
   $('#manualCardDialog').showModal();
 }
-async function saveManualCard(){
+async function saveManualCard(){if(!requireOnline('Adding cards needs an internet connection.'))return;
   const name=$('#manualName').value.trim();
   if(!name){$('#manualCardMessage').textContent='Card name is required.';$('#manualCardMessage').classList.add('error');return;}
   const qty=Math.max(1,parseInt($('#manualQuantity').value||'1',10));
@@ -337,8 +437,8 @@ async function addCurrent(){
   await loadCollection();await loadFolders();renderDashboard();renderLibrary();toast(currentCard.name+' saved');
 }
 function rowFor(x,compact){const e=document.createElement('div');e.className='cardrow';const total=(Number(x.price)||0)*(Number(x.quantity)||0);e.innerHTML='<img loading="lazy" src="'+esc(imageUrl(x.image))+'"><div class="cardmain"><div class="cardtitle">'+esc(x.name)+'</div><div class="cardmeta">'+esc(x.setName)+' • #'+esc(x.localId)+' • '+esc(x.variant)+' • '+esc(x.condition)+'</div>'+(compact?'':'<div class="qty"><button data-a="dec">−</button><span>'+x.quantity+'</span><button data-a="inc">+</button><button data-a="del">×</button></div>')+'</div><div class="cardprice">'+money(total,x.priceCurrency||'USD')+'<div class="cardmeta">×'+x.quantity+'</div></div>';if(!compact){e.querySelector('[data-a="inc"]').onclick=()=>adjust(x,1);e.querySelector('[data-a="dec"]').onclick=()=>adjust(x,-1);e.querySelector('[data-a="del"]').onclick=()=>removeEntry(x);}return e;}
-async function adjust(x,d){const q=x.quantity+d;if(q<=0)return removeEntry(x);const {error}=await sb.from('collection_items').update({quantity:q,updated_at:new Date().toISOString()}).eq('id',x.id);if(error)return toast('Could not update quantity');await loadCollection();renderLibrary();renderDashboard();}
-async function removeEntry(x){if(!confirm('Remove '+x.name+' from this collection?'))return;const {error}=await sb.from('collection_items').delete().eq('id',x.id);if(error)return toast('Could not remove card');await loadCollection();await loadFolders();renderLibrary();renderDashboard();}
+async function adjust(x,d){if(!requireOnline('Changing quantities needs an internet connection.'))return;const q=x.quantity+d;if(q<=0)return removeEntry(x);const {error}=await sb.from('collection_items').update({quantity:q,updated_at:new Date().toISOString()}).eq('id',x.id);if(error)return toast('Could not update quantity');await loadCollection();saveOfflineSnapshot();renderLibrary();renderDashboard();}
+async function removeEntry(x){if(!requireOnline('Removing cards needs an internet connection.'))return;if(!confirm('Remove '+x.name+' from this collection?'))return;const {error}=await sb.from('collection_items').delete().eq('id',x.id);if(error)return toast('Could not remove card');await loadCollection();await loadFolders();saveOfflineSnapshot();renderLibrary();renderDashboard();}
 function renderDashboard(){const count=items.reduce((s,x)=>s+Number(x.quantity||0),0),total=items.reduce((s,x)=>s+((x.priceCurrency==='USD'||!x.priceCurrency)?Number(x.price||0)*Number(x.quantity||0):0),0);$('#collectionValue').textContent=money(total);$('#totalCards').textContent=count.toLocaleString();$('#uniqueCards').textContent=items.length.toLocaleString();$('#duplicates').textContent=Math.max(0,count-items.length).toLocaleString();$('#setCount').textContent=new Set(items.map(x=>x.game+':'+x.setId).filter(Boolean)).size.toLocaleString();const r=[...items].sort((a,b)=>new Date(b.addedAt)-new Date(a.addedAt)).slice(0,5),b=$('#recent');b.innerHTML='';if(!r.length){b.className='panel empty';b.textContent='No cards yet.';}else{b.className='panel';r.forEach(x=>b.appendChild(rowFor(x,true)));}}
 
 
@@ -494,6 +594,16 @@ async function openLibraryCardDetails(x){
   $('#openEbaySold').href=ebaySoldSearchUrl(x);
   $('#libraryCardDialog').showModal();
   activeHistoryRange='1m';
+  if(offlineMode||!navigator.onLine){
+    $('#providerValueGrid').innerHTML='<div class="providervalue selected"><span>DeckVault</span><strong>'+money(x.price,x.priceCurrency||'USD')+'</strong><small>'+esc(x.priceSource||'Last saved price')+'</small></div>';
+    $('#priceHistoryMetric').innerHTML='<option>Offline</option>';
+    $('#priceHistoryChart').innerHTML='<div class="historyempty">Price-history data needs a connection. Your last saved card value is shown above.</div>';
+    $('#priceHistorySummary').textContent=offlineSnapshotAt?'Library synced '+new Date(offlineSnapshotAt).toLocaleString():'Using your saved offline library.';
+    $('#ebayCompStatus').textContent='Offline';
+    $('#ebayCompList').innerHTML='<div class="empty">Recent sales require an internet connection.</div>';
+    $('#openEbaySold').classList.add('hidden');
+    return;
+  }
   refreshCardValuation(x).catch(console.error);
 
   const {data,error}=await sb.from('sales_comps_cache')
@@ -562,7 +672,7 @@ function renderLibrary(){
   if(!a.length)box.innerHTML='<div class="empty">No cards match this view.</div>';
   else a.forEach(x=>box.appendChild(libraryCardFor(x)));
 }
-async function refreshPrices(){if(!items.length)return toast('No cards to refresh');const btn=$('#refreshPrices');btn.disabled=true;btn.textContent='Refreshing…';for(const id of [...new Set(items.filter(x=>x.game==='pokemon'&&x.entrySource!=='manual'&&!String(x.cardId).startsWith('manual:')).map(x=>x.cardId))].slice(0,50)){try{const c=await pokemonCard(id);for(const x of items.filter(i=>i.cardId===id)){const p=pokemonPrice(c,x.variant);await sb.from('collection_items').update({price:p.value==null?null:Number(p.value),price_currency:p.currency,price_source:p.label,price_updated_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',x.id);}}catch(e){console.warn(e);}}await loadCollection();btn.disabled=false;btn.textContent='Refresh prices';renderLibrary();renderDashboard();toast('Prices refreshed');}
+async function refreshPrices(){if(!requireOnline('Refreshing prices needs an internet connection.'))return;if(!items.length)return toast('No cards to refresh');const btn=$('#refreshPrices');btn.disabled=true;btn.textContent='Refreshing…';for(const id of [...new Set(items.filter(x=>x.game==='pokemon'&&x.entrySource!=='manual'&&!String(x.cardId).startsWith('manual:')).map(x=>x.cardId))].slice(0,50)){try{const c=await pokemonCard(id);for(const x of items.filter(i=>i.cardId===id)){const p=pokemonPrice(c,x.variant);await sb.from('collection_items').update({price:p.value==null?null:Number(p.value),price_currency:p.currency,price_source:p.label,price_updated_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',x.id);}}catch(e){console.warn(e);}}await loadCollection();saveOfflineSnapshot();btn.disabled=false;btn.textContent='Refresh prices';renderLibrary();renderDashboard();toast('Prices refreshed');}
 async function startCamera(){try{if(stream)stream.getTracks().forEach(t=>t.stop());stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});$('#video').srcObject=stream;$('#cameraPlaceholder').classList.add('hidden');$('#video').classList.remove('hidden');$('#capturePreview').classList.add('hidden');$('#captureCard').disabled=false;$('#cameraStatus').textContent='Camera ready';return true;}catch(e){$('#cameraStatus').textContent='Camera blocked';alert('Camera access failed. '+e.message);return false;}}
 function capture(){const v=$('#video');if(!v.videoWidth)return;const c=$('#canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0,c.width,c.height);$('#capturePreview').src=c.toDataURL('image/jpeg',.9);$('#capturePreview').classList.remove('hidden');v.classList.add('hidden');$('#captureCard').classList.add('hidden');$('#retake').classList.remove('hidden');$('#cameraStatus').textContent='Captured';stopActiveScan(false);}
 function retake(){$('#capturePreview').classList.add('hidden');$('#video').classList.remove('hidden');$('#captureCard').classList.remove('hidden');$('#retake').classList.add('hidden');$('#cameraStatus').textContent='Camera ready';}
@@ -719,7 +829,21 @@ async function init(){
   $('#clearData').onclick=async()=>{if(confirm('Delete every card in your DeckVault account collection?')){const {error}=await sb.from('collection_items').delete().eq('user_id',currentUser.id);if(error)return toast('Could not clear collection');await loadCollection();renderDashboard();renderLibrary();toast('Collection cleared');}};
   $('#priceSource').value=pricePref();$('#priceSource').onchange=e=>{localStorage.setItem('deckvault-price-source',e.target.value);toast('Price source saved');};
   window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;$('#installBtn').classList.remove('hidden');});$('#installBtn').onclick=async()=>{if(!installPrompt)return;installPrompt.prompt();await installPrompt.userChoice;installPrompt=null;$('#installBtn').classList.add('hidden');};
-  sb.auth.onAuthStateChange((event,session)=>{
+  window.addEventListener('offline',()=>{
+    if(!currentUser)return;
+    saveOfflineSnapshot();
+    const snap=readOfflineSnapshot(currentUser.id);
+    setOfflineMode(true,snap?.savedAt||offlineSnapshotAt);
+    toast('Offline mode: showing your saved library and prices.');
+    if(['lookup','scanner','marketplace','community'].includes(document.querySelector('.view.active')?.id))go('library');
+  });
+  window.addEventListener('online',()=>{
+    if(currentUser&&offlineMode){
+      toast('Connection restored. Syncing DeckVault…');
+      showApp(currentUser).catch(err=>console.error(err));
+    }
+  });
+    sb.auth.onAuthStateChange((event,session)=>{
     if(event==='SIGNED_OUT'){
       setTimeout(showAuth,0);
       return;
