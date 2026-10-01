@@ -20,6 +20,11 @@ const PROFILE_FIELDS=[
 
 let currentProfile=null;
 let isAdmin=false;
+let tradeListId=null;
+
+function marketplaceLabel(mode){
+  return ({off:'Not trading',trade:'Trade only',sell:'Sell / cash only',both:'Trade + Sell'})[mode]||'Not trading';
+}
 
 function authPane(id){
   ['signinPane','signupPane','applicationPane','resetPane'].forEach(x=>$('#'+x).classList.toggle('hidden',x!==id));
@@ -77,6 +82,7 @@ async function refreshSocialState(){
   }
   await loadProfileSettings();
   await loadMyLists();
+  await loadTradeList();
 }
 
 async function finishOnboarding(e){
@@ -120,6 +126,8 @@ async function loadProfileSettings(){
     $('#profileDisplayName').value=p.display_name||'';
     $('#profileBio').value=p.bio||'';
     $('#profileAvatarUrl').value=p.avatar_url||'';
+    $('#marketplaceMode').value=p.marketplace_mode||'off';
+    $('#marketplaceNote').value=p.marketplace_note||'';
   }
   const {data:details}=await sb.from('profile_details').select('*').eq('user_id',currentUser.id);
   const map=Object.fromEntries((details||[]).map(d=>[d.field_key,d]));
@@ -167,7 +175,7 @@ async function saveProfileDetails(){
 
 async function searchCommunity(){
   const q=$('#communitySearch').value.trim();
-  let query=sb.from('profiles').select('id,username,display_name,bio,avatar_url').not('username','is',null).limit(30);
+  let query=sb.from('profiles').select('id,username,display_name,bio,avatar_url,marketplace_mode,marketplace_note').not('username','is',null).limit(30);
   if(q)query=query.ilike('username','%'+q.replace(/[%_]/g,'')+'%');
   const {data,error}=await query;
   const box=$('#communityResults');box.innerHTML='';
@@ -183,14 +191,15 @@ async function searchCommunity(){
 
 async function viewProfile(userId){
   const [{data:p,error},{data:details},{data:lists}]=await Promise.all([
-    sb.from('profiles').select('id,username,display_name,bio,avatar_url').eq('id',userId).single(),
+    sb.from('profiles').select('id,username,display_name,bio,avatar_url,marketplace_mode,marketplace_note').eq('id',userId).single(),
     sb.from('profile_details').select('field_key,field_value,visibility').eq('user_id',userId),
     sb.from('collection_lists').select('id,name,description,visibility').eq('user_id',userId).order('created_at',{ascending:false})
   ]);
   if(error)return toast('Profile unavailable');
   const box=$('#publicProfileView');box.classList.remove('hidden');
   const d=(details||[]).filter(x=>userId===currentUser.id||x.visibility==='public');
-  box.innerHTML='<div class="profilehero">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'">':'<div class="avatarfallback large">DV</div>')+'<div><div class="eyebrow">COLLECTOR PROFILE</div><h2>@'+esc(p.username||'collector')+'</h2><strong>'+esc(p.display_name||'')+'</strong><p>'+esc(p.bio||'')+'</p></div></div>'+
+  const marketBadge=p.marketplace_mode&&p.marketplace_mode!=='off'?'<span class="marketbadge '+esc(p.marketplace_mode)+'">'+esc(marketplaceLabel(p.marketplace_mode))+'</span>':'';
+  box.innerHTML='<div class="profilehero">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'">':'<div class="avatarfallback large">DV</div>')+'<div><div class="eyebrow">COLLECTOR PROFILE</div><h2>@'+esc(p.username||'collector')+'</h2>'+marketBadge+'<strong>'+esc(p.display_name||'')+'</strong><p>'+esc(p.bio||'')+'</p>'+(p.marketplace_mode!=='off'&&p.marketplace_note?'<p class="marketnote">'+esc(p.marketplace_note)+'</p>':'')+'</div></div>'+
     '<div class="publicdetails">'+d.map(x=>'<div><span>'+esc(PROFILE_FIELDS.find(f=>f[0]===x.field_key)?.[1]||x.field_key)+'</span><strong>'+esc(x.field_value)+'</strong></div>').join('')+'</div>'+
     '<h3>Public lists</h3><div id="profileLists" class="liststack"></div><div id="profileListContents"></div>';
   const lb=$('#profileLists');
@@ -217,7 +226,7 @@ async function loadMyLists(){
   const box=$('#myLists');box.innerHTML='';
   if(error){box.innerHTML='<div class="empty">Could not load lists.</div>';return;}
   if(!data?.length){box.innerHTML='<div class="empty">No lists yet.</div>';return;}
-  data.forEach(l=>{
+  data.filter(l=>!l.system_key).forEach(l=>{
     const e=document.createElement('div');e.className='listmanager';
     e.innerHTML='<div class="listmanagerhead"><div><strong>'+esc(l.name)+'</strong><small>'+esc(l.description||'')+'</small></div><select data-vis><option value="private">Private</option><option value="public">Public</option></select></div><div class="listadd"><select data-card><option value="">Add a card…</option>'+items.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name+' — '+x.setName+' #'+x.localId)+'</option>').join('')+'</select><button class="secondary" data-add>Add</button><button class="dangerbtn" data-delete>Delete list</button></div>';
     e.querySelector('[data-vis]').value=l.visibility;
@@ -233,6 +242,118 @@ async function createList(){
   const {error}=await sb.from('collection_lists').insert({user_id:currentUser.id,name,visibility:$('#newListVisibility').value});
   if(error)return toast('Could not create list');
   $('#newListName').value='';await loadMyLists();toast('List created');
+}
+
+
+async function saveMarketplaceSettings(){
+  const mode=$('#marketplaceMode').value;
+  const note=$('#marketplaceNote').value.trim()||null;
+  const {data,error}=await sb.from('profiles').update({
+    marketplace_mode:mode,
+    marketplace_note:note,
+    updated_at:new Date().toISOString()
+  }).eq('id',currentUser.id).select().single();
+  if(error)return toast('Could not save marketplace status');
+  currentProfile=data;
+  await loadTradeList();
+  toast(mode==='off'?'Marketplace hidden':'Marketplace status saved');
+}
+
+async function loadTradeList(){
+  if(!currentUser||!$('#tradeListItems'))return;
+  const {data:list,error}=await sb.from('collection_lists')
+    .select('id,name,visibility,system_key,collection_list_items(collection_item_id,offer_quantity,asking_price,offer_note,collection_items(*))')
+    .eq('user_id',currentUser.id)
+    .eq('system_key','trade')
+    .maybeSingle();
+  if(error){console.error(error);$('#tradeListItems').innerHTML='<div class="empty">Could not load Trade / Sell list.</div>';return;}
+  tradeListId=list?.id||null;
+  const mode=currentProfile?.marketplace_mode||'off';
+  $('#tradeListStatus').textContent=mode==='off'?'Hidden':marketplaceLabel(mode);
+  $('#tradeListStatus').classList.toggle('active',mode!=='off');
+
+  const select=$('#tradeCardSelect');
+  select.innerHTML='<option value="">Choose a card…</option>'+items.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name+' — '+x.setName+' #'+x.localId+' — '+x.condition)+'</option>').join('');
+
+  const box=$('#tradeListItems');box.innerHTML='';
+  const rows=list?.collection_list_items||[];
+  if(!rows.length){box.innerHTML='<div class="empty">No cards in your Trade / Sell list yet.</div>';return;}
+  rows.forEach(r=>{
+    const c=r.collection_items?fromRow(r.collection_items):null;
+    if(!c)return;
+    const e=document.createElement('div');e.className='tradeentry';
+    e.innerHTML='<img src="'+esc(imageUrl(c.image))+'" alt=""><div class="tradeentrymain"><strong>'+esc(c.name)+'</strong><span>'+esc(c.setName)+' • #'+esc(c.localId)+' • '+esc(c.variant)+' • '+esc(c.condition)+'</span><small>Offering '+Math.min(Number(r.offer_quantity||1),Number(c.quantity||1))+' of '+c.quantity+' owned'+(r.asking_price!=null?' • Asking '+money(r.asking_price,c.priceCurrency||'USD'):'')+'</small>'+(r.offer_note?'<small>'+esc(r.offer_note)+'</small>':'')+'</div><button class="dangerbtn" data-remove>Remove</button>';
+    e.querySelector('[data-remove]').onclick=()=>removeTradeCard(c.id);
+    box.appendChild(e);
+  });
+}
+
+async function addTradeCard(){
+  if(!tradeListId)await loadTradeList();
+  const itemId=$('#tradeCardSelect').value;
+  const owned=items.find(x=>x.id===itemId);
+  if(!owned)return toast('Choose a card from your collection');
+  const qty=Math.max(1,parseInt($('#tradeOfferQuantity').value||'1',10));
+  if(qty>Number(owned.quantity||1))return toast('Offer quantity is more than you own');
+  const rawPrice=$('#tradeAskingPrice').value.trim();
+  const asking=rawPrice===''?null:Number(rawPrice);
+  const note=$('#tradeOfferNote').value.trim()||null;
+  const {error}=await sb.from('collection_list_items').upsert({
+    list_id:tradeListId,
+    collection_item_id:itemId,
+    offer_quantity:qty,
+    asking_price:asking,
+    offer_note:note
+  },{onConflict:'list_id,collection_item_id'});
+  if(error){console.error(error);return toast('Could not add marketplace listing');}
+  $('#tradeOfferQuantity').value='1';$('#tradeAskingPrice').value='';$('#tradeOfferNote').value='';
+  await loadTradeList();
+  toast('Trade / Sell listing saved');
+}
+
+async function removeTradeCard(itemId){
+  if(!tradeListId)return;
+  const {error}=await sb.from('collection_list_items').delete().eq('list_id',tradeListId).eq('collection_item_id',itemId);
+  if(error)return toast('Could not remove listing');
+  await loadTradeList();toast('Listing removed');
+}
+
+async function marketCardSearch(){
+  const name=$('#marketSearchName').value.trim(), number=$('#marketSearchNumber').value.trim();
+  if(!name&&!number)return toast('Enter a card name or collector number');
+  $('#marketSearchStatus').textContent='Searching card database…';
+  $('#marketCardResults').innerHTML='';$('#marketOffers').innerHTML='';$('#marketOfferHeading').classList.add('hidden');
+  try{
+    const cards=await pokemonSearch(name,number);
+    $('#marketSearchStatus').textContent=cards.length+' card match'+(cards.length===1?'':'es');
+    const box=$('#marketCardResults');
+    if(!cards.length){box.innerHTML='<div class="empty">No matching cards found.</div>';return;}
+    cards.slice(0,30).forEach(c=>{
+      const e=document.createElement('article');e.className='result';
+      e.innerHTML='<img loading="lazy" src="'+esc(imageUrl(c.image))+'" alt="'+esc(c.name)+'"><div class="info"><strong>'+esc(c.name)+'</strong><div class="meta">#'+esc(c.localId)+' • '+esc(c.id)+'</div><button type="button">Find offers</button></div>';
+      e.querySelector('button').onclick=()=>findTradeOffers(c);
+      box.appendChild(e);
+    });
+  }catch(err){$('#marketSearchStatus').textContent=err.message;}
+}
+
+async function findTradeOffers(card){
+  $('#marketOfferHeading').classList.remove('hidden');
+  $('#marketOfferHeading').innerHTML='<h2>'+esc(card.name)+' offers</h2><div class="muted">#'+esc(card.localId)+' • '+esc(card.id)+'</div>';
+  $('#marketOffers').innerHTML='<div class="empty">Checking active Trade / Sell lists…</div>';
+  const {data,error}=await sb.rpc('search_trade_offers',{p_game:'pokemon',p_card_id:card.id});
+  const box=$('#marketOffers');box.innerHTML='';
+  if(error){console.error(error);box.innerHTML='<div class="empty">Could not search marketplace.</div>';return;}
+  if(!data?.length){box.innerHTML='<div class="empty">No approved collectors currently have this card in an active Trade / Sell list.</div>';return;}
+  data.forEach(o=>{
+    const e=document.createElement('article');e.className='offercard';
+    const who=o.user_id===currentUser.id?'You':'@'+(o.username||'collector');
+    const asking=o.asking_price!=null&&['sell','both'].includes(o.marketplace_mode)?'<div class="offerprice">'+money(o.asking_price,o.price_currency||'USD')+'</div>':'';
+    e.innerHTML='<div class="offeruser">'+(o.avatar_url?'<img src="'+esc(o.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+'<div><strong>'+esc(who)+'</strong><span class="marketbadge '+esc(o.marketplace_mode)+'">'+esc(marketplaceLabel(o.marketplace_mode))+'</span></div>'+asking+'</div><div class="offerbody"><strong>'+esc(o.card_name)+'</strong><span>'+esc(o.set_name)+' • #'+esc(o.local_id)+'</span><span>'+esc(o.variant)+' • '+esc(o.condition)+' • '+esc(o.language)+'</span><span>Available quantity: '+Number(o.offer_quantity||1)+'</span>'+(o.offer_note?'<p>'+esc(o.offer_note)+'</p>':'')+(o.marketplace_note?'<p class="marketnote">'+esc(o.marketplace_note)+'</p>':'')+'<button type="button" class="secondary">View profile</button></div>';
+    e.querySelector('button').onclick=()=>{go('community');viewProfile(o.user_id);};
+    box.appendChild(e);
+  });
+  $('#marketOfferHeading').scrollIntoView({behavior:'smooth',block:'start'});
 }
 
 async function checkAdmin(){
@@ -271,13 +392,18 @@ document.addEventListener('DOMContentLoaded',()=>{
   $('#applicationForm').onsubmit=submitApplication;
   $('#onboardingForm').onsubmit=finishOnboarding;
   $('#saveProfileBtn').onclick=saveProfile;
+  $('#saveMarketplaceBtn').onclick=saveMarketplaceSettings;
+  $('#addTradeCardBtn').onclick=addTradeCard;
   $('#saveProfileDetailsBtn').onclick=saveProfileDetails;
   $('#createListBtn').onclick=createList;
   $('#communitySearchBtn').onclick=searchCommunity;
+  $('#marketSearchBtn').onclick=marketCardSearch;
+  $('#marketSearchName').onkeydown=e=>{if(e.key==='Enter')marketCardSearch();};
+  $('#marketSearchNumber').onkeydown=e=>{if(e.key==='Enter')marketCardSearch();};
   $('#communitySearch').onkeydown=e=>{if(e.key==='Enter')searchCommunity();};
   $('#refreshApplications').onclick=loadApplications;
   document.querySelectorAll('[data-go="community"]').forEach(b=>b.addEventListener('click',searchCommunity));
-  document.querySelectorAll('[data-go="settings"]').forEach(b=>b.addEventListener('click',()=>{loadProfileSettings();loadMyLists();if(isAdmin)loadApplications();}));
+  document.querySelectorAll('[data-go="settings"]').forEach(b=>b.addEventListener('click',()=>{loadProfileSettings();loadMyLists();loadTradeList();if(isAdmin)loadApplications();}));
   sb.auth.onAuthStateChange((event,session)=>{
     if(event==='SIGNED_OUT'){$('#onboardingGate').classList.add('hidden');return;}
     if(session?.user)setTimeout(refreshSocialState,50);
