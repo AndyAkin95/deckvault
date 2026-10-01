@@ -1324,20 +1324,24 @@ function normalizeCollectorId(value){
   return m?m[1]+String(Number(m[2])):raw;
 }
 function parseCardFractions(text){
-  const clean=normalizeScanText(text);
-  const fractions=[];
-  // Number/total is more dependable than artwork alone. Allow OCR's O/I/L
-  // lookalikes in the numeric portion, without changing lettered promo prefixes.
-  for(const m of clean.matchAll(/(?:^|[^A-Z0-9])([A-Z]{0,4}\s*[0-9OIl]{1,4})\s*[/\\|]\s*([0-9OIl]{2,4})(?![0-9])/gi)){
+  const clean=normalizeScanText(text),fractions=[];
+  // Handles numeric cards (161/197), secret rares, and subset numbers
+  // like TG05/TG30. O, I and L are common numeric OCR substitutions.
+  for(const m of clean.matchAll(/(?:^|[^A-Z0-9])([A-Z]{0,4}\s*[0-9OIl]{1,4})\s*[/\\|]\s*([A-Z]{0,4}\s*[0-9OIl]{2,4})(?![0-9])/gi)){
     const lhs=m[1].replace(/\s+/g,'').toUpperCase();
-    const split=lhs.match(/^([A-Z]{0,4})([0-9OIL]{1,4})$/);
-    if(!split)continue;
+    const rhs=m[2].replace(/\s+/g,'').toUpperCase();
     const asNumber=v=>v.replace(/[OQ]/g,'0').replace(/[IL]/g,'1');
-    const left=split[1]+asNumber(split[2]);
-    const denominator=Number(asNumber(m[2].toUpperCase()));
-    const local=normalizeCollectorId(left);
-    const localNumber=Number(asNumber(split[2]));
-    if(!denominator||denominator<10||denominator>999||!localNumber||localNumber>9999)continue;
+    // Keep a known subset prefix (TG, GG, RC), but don't misread a
+    // leading O or I in an otherwise numeric collector number as a prefix.
+    let left=lhs.match(/^([A-Z]{0,4})([0-9OIL]{1,4})$/);
+    const right=rhs.match(/^([A-Z]{0,4})([0-9OIL]{2,4})$/);
+    if(!left||!right)continue;
+    if(/^[OIL]/.test(left[1])&&!/[A-HJ-NP-Z]/.test(left[1]))left=['', '',left[1]+left[2]];
+    const number=Number(asNumber(left[2]));
+    const denominator=Number(asNumber(right[2]));
+    const local=normalizeCollectorId(left[1]+asNumber(left[2]));
+    if(!denominator||denominator<10||denominator>999||!number||number>9999)continue;
+    if(right[1]&&left[1]&&right[1]!==left[1])continue;
     fractions.push({localId:local,denominator,raw:m[0].trim()});
   }
   return [...new Map(fractions.map(f=>[f.localId+'/'+f.denominator,f])).values()].reverse();
