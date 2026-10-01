@@ -24,6 +24,7 @@ let tradeListId=null;
 let marketplaceFeedRows=[];
 let mfaEnrollmentFactorId=null;
 let pendingAdminAction=null;
+let communityChannel=null, activeForumThreadId=null;
 
 function marketplaceLabel(mode){
   return ({off:'Not trading',trade:'Trade only',sell:'Sell / cash only',both:'Trade + Sell'})[mode]||'Not trading';
@@ -430,6 +431,121 @@ async function findTradeOffers(card){
   $('#marketOfferHeading').scrollIntoView({behavior:'smooth',block:'start'});
 }
 
+
+async function profileMapFor(userIds){
+  const ids=[...new Set((userIds||[]).filter(Boolean))];
+  if(!ids.length)return {};
+  const {data}=await sb.from('profiles').select('id,username,display_name,avatar_url').in('id',ids);
+  return Object.fromEntries((data||[]).map(p=>[p.id,p]));
+}
+function switchCommunityTab(tab){
+  $('[data-community-tab]').forEach(b=>b.classList.toggle('active',b.dataset.communityTab===tab));
+  $('#communityChatPane').classList.toggle('active',tab==='chat');
+  $('#communityForumsPane').classList.toggle('active',tab==='forums');
+  $('#communityProfilesPane').classList.toggle('active',tab==='profiles');
+  if(tab==='chat')loadCommunityChat();
+  if(tab==='forums')loadForumThreads();
+  if(tab==='profiles')searchCommunity();
+}
+async function loadCommunityChat(){
+  if(!currentUser||!$('#communityChatMessages'))return;
+  const {data,error}=await sb.from('community_messages').select('id,user_id,body,created_at').order('created_at',{ascending:false}).limit(100);
+  const box=$('#communityChatMessages');box.innerHTML='';
+  if(error){console.error(error);box.innerHTML='<div class="empty">Could not load community chat.</div>';return;}
+  const rows=[...(data||[])].reverse();
+  const profiles=await profileMapFor(rows.map(x=>x.user_id));
+  if(!rows.length){box.innerHTML='<div class="empty">No messages yet. Start the conversation.</div>';return;}
+  rows.forEach(m=>{
+    const p=profiles[m.user_id]||{};
+    const mine=m.user_id===currentUser.id;
+    const e=document.createElement('div');e.className='chatmessage'+(mine?' mine':'');
+    e.innerHTML='<div class="chatavatar">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+'</div><div class="chatbubble"><div class="chatmeta"><strong>'+(mine?'You':'@'+esc(p.username||'collector'))+'</strong><span>'+new Date(m.created_at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})+'</span></div><p>'+esc(m.body)+'</p>'+(mine||isAdmin?'<button class="chatdelete" type="button" title="Delete message">×</button>':'')+'</div>';
+    const del=e.querySelector('.chatdelete');
+    if(del)del.onclick=async()=>{const {error}=await sb.from('community_messages').delete().eq('id',m.id);if(error)return toast('Could not delete message');loadCommunityChat();};
+    box.appendChild(e);
+  });
+  box.scrollTop=box.scrollHeight;
+}
+async function sendCommunityMessage(e){
+  e.preventDefault();
+  const input=$('#communityChatInput'),body=input.value.trim();
+  if(!body)return;
+  const {error}=await sb.from('community_messages').insert({user_id:currentUser.id,body});
+  if(error)return toast('Could not send message');
+  input.value='';
+  await loadCommunityChat();
+}
+function startCommunityRealtime(){
+  if(communityChannel)return;
+  communityChannel=sb.channel('deckvault-community-chat')
+    .on('postgres_changes',{event:'INSERT',schema:'public',table:'community_messages'},()=>loadCommunityChat())
+    .on('postgres_changes',{event:'DELETE',schema:'public',table:'community_messages'},()=>loadCommunityChat())
+    .subscribe();
+}
+async function loadForumThreads(){
+  if(!currentUser||!$('#forumThreads'))return;
+  const [{data:threads,error},{data:posts}]=await Promise.all([
+    sb.from('forum_threads').select('id,user_id,title,body,created_at,updated_at,locked').order('updated_at',{ascending:false}).limit(100),
+    sb.from('forum_posts').select('thread_id')
+  ]);
+  const box=$('#forumThreads');box.innerHTML='';
+  if(error){box.innerHTML='<div class="empty">Could not load forums.</div>';return;}
+  if(!threads?.length){box.innerHTML='<div class="empty">No forum threads yet.</div>';return;}
+  const profiles=await profileMapFor(threads.map(t=>t.user_id));
+  const counts={};(posts||[]).forEach(p=>counts[p.thread_id]=(counts[p.thread_id]||0)+1);
+  threads.forEach(t=>{
+    const p=profiles[t.user_id]||{};
+    const e=document.createElement('button');e.className='forumthreadcard';
+    e.innerHTML='<div><strong>'+esc(t.title)+'</strong><span>by @'+esc(p.username||'collector')+' • '+new Date(t.created_at).toLocaleDateString()+'</span><p>'+esc(t.body.slice(0,180))+(t.body.length>180?'…':'')+'</p></div><div class="forumcount"><b>'+Number(counts[t.id]||0)+'</b><small>replies</small></div>';
+    e.onclick=()=>openForumThread(t.id);
+    box.appendChild(e);
+  });
+}
+async function createForumThread(){
+  const title=$('#newForumTitle').value.trim(),body=$('#newForumBody').value.trim(),msg=$('#newForumMessage');
+  msg.textContent='';msg.classList.remove('error');
+  if(title.length<3||!body){msg.textContent='Add a title and post.';msg.classList.add('error');return;}
+  const {data,error}=await sb.from('forum_threads').insert({user_id:currentUser.id,title,body}).select().single();
+  if(error){msg.textContent=error.message;msg.classList.add('error');return;}
+  $('#newForumThreadDialog').close();$('#newForumTitle').value='';$('#newForumBody').value='';
+  await loadForumThreads();openForumThread(data.id);
+}
+async function openForumThread(threadId){
+  activeForumThreadId=threadId;
+  const [{data:thread,error},{data:posts}]=await Promise.all([
+    sb.from('forum_threads').select('*').eq('id',threadId).single(),
+    sb.from('forum_posts').select('*').eq('thread_id',threadId).order('created_at',{ascending:true})
+  ]);
+  if(error)return toast('Could not open thread');
+  const profiles=await profileMapFor([thread.user_id,...(posts||[]).map(p=>p.user_id)]);
+  const author=profiles[thread.user_id]||{};
+  $('#forumListView').classList.add('hidden');$('#forumThreadView').classList.remove('hidden');
+  $('#forumThreadHeader').innerHTML='<div class="eyebrow">THREAD</div><h2>'+esc(thread.title)+'</h2><div class="forumauthor">@'+esc(author.username||'collector')+' • '+new Date(thread.created_at).toLocaleString()+(thread.locked?' • Locked':'')+'</div><p>'+esc(thread.body)+'</p>';
+  const box=$('#forumPosts');box.innerHTML='';
+  (posts||[]).forEach(post=>{
+    const p=profiles[post.user_id]||{},mine=post.user_id===currentUser.id;
+    const e=document.createElement('article');e.className='forumpost';
+    e.innerHTML='<div class="forumpostuser">'+(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+'<div><strong>'+(mine?'You':'@'+esc(p.username||'collector'))+'</strong><small>'+new Date(post.created_at).toLocaleString()+'</small></div></div><p>'+esc(post.body)+'</p>'+(mine||isAdmin?'<button class="dangerbtn forumdelete" type="button">Delete</button>':'');
+    const del=e.querySelector('.forumdelete');
+    if(del)del.onclick=async()=>{if(!confirm('Delete this reply?'))return;const {error}=await sb.from('forum_posts').delete().eq('id',post.id);if(error)return toast('Could not delete reply');openForumThread(threadId);};
+    box.appendChild(e);
+  });
+  $('#forumReplyForm').classList.toggle('hidden',thread.locked);
+}
+async function sendForumReply(e){
+  e.preventDefault();
+  if(!activeForumThreadId)return;
+  const body=$('#forumReplyBody').value.trim();if(!body)return;
+  const {error}=await sb.from('forum_posts').insert({thread_id:activeForumThreadId,user_id:currentUser.id,body});
+  if(error)return toast('Could not post reply');
+  await sb.from('forum_threads').update({updated_at:new Date().toISOString()}).eq('id',activeForumThreadId);
+  $('#forumReplyBody').value='';openForumThread(activeForumThreadId);
+}
+function openCommunity(){
+  switchCommunityTab('chat');
+  startCommunityRealtime();
+}
+
 async function checkAdminMfa(){
   if(!isAdmin)return false;
   const {data,error}=await sb.auth.mfa.listFactors();
@@ -626,6 +742,13 @@ document.addEventListener('DOMContentLoaded',()=>{
   $('#saveProfileDetailsBtn').onclick=saveProfileDetails;
   $('#createListBtn').onclick=createList;
   $('#communitySearchBtn').onclick=searchCommunity;
+  $('[data-community-tab]').forEach(b=>b.onclick=()=>switchCommunityTab(b.dataset.communityTab));
+  $('#communityChatForm').onsubmit=sendCommunityMessage;
+  $('#refreshChatBtn').onclick=loadCommunityChat;
+  $('#newForumThreadBtn').onclick=()=>{$('#newForumThreadDialog').showModal();};
+  $('#createForumThreadBtn').onclick=createForumThread;
+  $('#backToForumsBtn').onclick=()=>{$('#forumThreadView').classList.add('hidden');$('#forumListView').classList.remove('hidden');loadForumThreads();};
+  $('#forumReplyForm').onsubmit=sendForumReply;
   $('#marketSearchBtn').onclick=marketCardSearch;
   $('#refreshMarketplace').onclick=loadMarketplaceFeed;
   let marketFeedTimer=null;
@@ -642,7 +765,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   $('#setupAdminMfaBtn').onclick=startAdminMfaEnrollment;
   $('#verifyMfaEnrollBtn').onclick=verifyAdminMfaEnrollment;
   $('#confirmAdminActionBtn').onclick=executeAdminAction;
-  document.querySelectorAll('[data-go="community"]').forEach(b=>b.addEventListener('click',searchCommunity));
+  document.querySelectorAll('[data-go="community"]').forEach(b=>b.addEventListener('click',openCommunity));
   document.querySelectorAll('[data-go="marketplace"]').forEach(b=>b.addEventListener('click',loadMarketplaceFeed));
   document.querySelectorAll('[data-go="settings"]').forEach(b=>b.addEventListener('click',()=>{loadProfileSettings();loadMyLists();loadTradeList();if(isAdmin)Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit()]);}));
   sb.auth.onAuthStateChange((event,session)=>{
@@ -654,6 +777,6 @@ document.addEventListener('DOMContentLoaded',()=>{
       setTimeout(()=>refreshSocialState().catch(console.error),0);
     }
   });
-  setTimeout(()=>{if(currentUser)refreshSocialState();},250);
+  setTimeout(()=>{if(currentUser){refreshSocialState();startCommunityRealtime();}},250);
 });
 window.refreshSocialState=refreshSocialState;
