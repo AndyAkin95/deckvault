@@ -290,3 +290,19 @@ textarea{font:inherit;resize:vertical;min-height:86px}
 .analyticsmovers{display:grid;grid-template-columns:1fr 1fr;gap:7px}.moverrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;text-align:left;border:1px solid var(--line);background:#0d1726;color:#fff;border-radius:12px;padding:9px}.moverrow strong,.moverrow span,.moverrow b,.moverrow small{display:block}.moverrow span,.moverrow small{font-size:.63rem;color:var(--muted);margin-top:2px}.moverrow>div:last-child{text-align:right}.moverrow.up b{color:#86efac}.moverrow.down b{color:#fca5a5}
 .librarygrade{display:inline-block!important;width:max-content;border:1px solid #40516e;border-radius:999px;padding:3px 6px;color:#dbeafe!important;background:#17243a;font-size:.58rem!important;font-weight:850}
 @media(max-width:680px){.savedsections,.analyticsmovers{grid-template-columns:1fr}.saveditem{grid-template-columns:40px minmax(0,1fr)}.saveditem>div:last-child{grid-column:2;justify-content:flex-start}}
+
+/* Scanner recognition fallback */
+.scanchoices{margin:14px 0;padding:15px;border:1px solid var(--line);border-radius:14px;background:#111c2c}
+.scanchoices h3{margin:3px 0 6px}.scanchoices p{margin:0 0 12px}
+.scanchoicesgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(115px,1fr));gap:10px;max-height:410px;overflow:auto}
+.scanchoice{appearance:none;display:flex;flex-direction:column;gap:5px;align-items:center;min-width:0;text-align:center;background:#0a1422;color:var(--text);border:1px solid #35475c;border-radius:12px;padding:8px;cursor:pointer}
+.scanchoice:focus-visible,.scanchoice:hover{border-color:var(--accent)}
+.scanchoice img{width:100%;height:150px;object-fit:contain}
+.scanchoice strong{font-size:.78rem;line-height:1.2}
+.scanchoice span{font-size:.68rem;color:var(--muted)}
+.scanmanual{margin-top:12px}.scanmanual summary{cursor:pointer;font-weight:750}
+.scanmanualfields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;padding-top:12px}
+.scanmanualfields button{grid-column:1/-1}.scanmanualfields label{font-size:.74rem}
+.scanmanualfields input{width:100%;margin-top:4px}
+#scanReadout{display:block;margin-top:8px;overflow-wrap:anywhere}
+@media(max-width:500px){.scanmanualfields{grid-template-columns:1fr}.scanchoicesgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
