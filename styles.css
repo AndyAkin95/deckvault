@@ -55,3 +55,7 @@ textarea{font:inherit;resize:vertical;min-height:86px}
 #adminActionReasonWrap,#adminActionNotesWrap{display:grid;gap:7px;font-size:.82rem;font-weight:700;margin:12px 0}#adminActionReasonWrap textarea,#adminActionNotesWrap textarea{background:#0b1220;color:#fff;border:1px solid #334155;border-radius:12px;padding:10px}
 #bannedGate .danger{margin:14px 0}
 @media(max-width:560px){.adminsecurity{align-items:stretch;flex-direction:column}.legalcard{padding:16px}.legaltext{max-height:55vh}}
+
+.staylogin{display:flex!important;align-items:center;gap:11px;border:1px solid #334155;background:#0d1726;border-radius:13px;padding:11px 12px;cursor:pointer;user-select:none}
+.staylogin input{width:19px!important;height:19px;accent-color:var(--accent);flex:0 0 auto}
+.staylogin span{display:grid;gap:2px;text-align:left}.staylogin strong{font-size:.84rem}.staylogin small{font-size:.7rem;color:var(--muted);font-weight:500}
