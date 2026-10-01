@@ -373,6 +373,15 @@ async function syncOfflineQueue(){
         }
         const {error}=await sb.from('collection_items').update({quantity:op.payload.quantity,updated_at:op.payload.updated_at}).eq('id',op.payload.id);
         if(error)throw error;
+      }else if(op.type==='collection_update'){
+        const {data:server,error:getErr}=await sb.from('collection_items').select('id,updated_at').eq('id',op.payload.id).maybeSingle();
+        if(getErr)throw getErr;
+        if(server&&op.baseUpdatedAt&&new Date(server.updated_at)>new Date(op.baseUpdatedAt)){
+          addOfflineConflict(op,server,'Card details changed on the server after this device went offline.');continue;
+        }
+        const payload={...op.payload};delete payload.id;
+        const {error}=await sb.from('collection_items').update(payload).eq('id',op.payload.id);
+        if(error)throw error;
       }else if(op.type==='collection_delete'){
         const {data:server,error:getErr}=await sb.from('collection_items').select('id,updated_at').eq('id',op.payload.id).maybeSingle();
         if(getErr)throw getErr;
@@ -557,6 +566,7 @@ async function showApp(user,termsJustAccepted=false){
     $('#accountEmail').textContent=user.email||'';
     localStorage.setItem(LAST_USER_KEY,user.id);
     setOfflineMode(false);
+    await syncOfflineQueue();
     const collectionOK=await loadCollection();
     const foldersOK=await loadFolders();
     if(collectionOK===false||foldersOK===false)throw new Error('Network data load failed');
@@ -822,8 +832,8 @@ async function addCurrent(){
   const folderId=$('#addFolder').value;
   if(offlineMode||!navigator.onLine){
     if(old)Object.assign(old,x);else items.unshift(x);
-    queueOfflineMutation(old?'quantity_update':'collection_insert',
-      old?{id,quantity:x.quantity,updated_at:now}:{id,...toRow(x),added_at:now,updated_at:now},
+    queueOfflineMutation(old?'collection_update':'collection_insert',
+      old?{id,...toRow(x),updated_at:now}:{id,...toRow(x),added_at:now,updated_at:now},
       old?.updatedAt||null);
     if(folderId){
       if(!folderMembership.has(folderId))folderMembership.set(folderId,new Set());
@@ -1392,15 +1402,62 @@ function rejectActiveScanMatch(){
   activeScanMatch=null;$('#activeScanCandidate').classList.add('hidden');startActiveScan();
 }
 function confirmActiveScanMatch(){
-  const card=activeScanMatch;if(!card)return;
+  const card=activeScanMatch;if(!card)return;haptic(28);
   activeScanMatch=null;$('#activeScanCandidate').classList.add('hidden');stopActiveScan(false);
   openCard(card.id);
 }
 function download(content,type,name){const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 const csv=v=>{const s=String(v??'');return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
-async function exportJson(){download(JSON.stringify({format:'deckvault-backup',version:2,exportedAt:new Date().toISOString(),collection:items},null,2),'application/json','deckvault-backup-'+new Date().toISOString().slice(0,10)+'.json');}
-async function exportCsv(collectr){const cols=collectr?['Game','Card Name','Set','Card Number','Variant','Condition','Language','Quantity','Provider ID','Current Price','Currency']:['Game','Name','Set','Set ID','Card Number','Variant','Condition','Language','Quantity','Rarity','Provider ID','Price','Price Paid','Currency','Price Source','Added At','Updated At','Notes'];const rows=items.map(x=>collectr?[x.game,x.name,x.setName,x.localId,x.variant,x.condition,x.language,x.quantity,x.cardId,x.price||'',x.priceCurrency||'']:[x.game,x.name,x.setName,x.setId,x.localId,x.variant,x.condition,x.language,x.quantity,x.rarity,x.cardId,x.price||'',x.pricePaid??'',x.priceCurrency||'',x.priceSource||'',x.addedAt,x.updatedAt,x.notes||'']);download([cols,...rows].map(r=>r.map(csv).join(',')).join('\n'),'text/csv;charset=utf-8',(collectr?'deckvault-collectr-transfer-':'deckvault-collection-')+new Date().toISOString().slice(0,10)+'.csv');}
-async function importBackup(file){const d=JSON.parse(await file.text());if(!d||!Array.isArray(d.collection))throw new Error('Not a valid DeckVault backup.');if(!confirm('Restore '+d.collection.length+' entries to this account?'))return;for(const x of d.collection){const cardId=x.cardId||x.card_id;if(!cardId)continue;const variant=x.variant||'Normal',condition=x.condition||'Near Mint',language=x.language||'English';const old=items.find(i=>i.game===(x.game||'pokemon')&&i.cardId===cardId&&i.variant===variant&&i.condition===condition&&i.language===language);const obj={game:x.game||'pokemon',cardId,name:x.name||'',localId:x.localId||x.local_id||'',setId:x.setId||x.set_id||'',setName:x.setName||x.set_name||'',rarity:x.rarity||'',variant,condition,language,quantity:Number(x.quantity||1),image:x.image||x.image_url||'',price:x.price==null?null:Number(x.price),pricePaid:(x.pricePaid??x.price_paid)==null?null:Number(x.pricePaid??x.price_paid),priceCurrency:x.priceCurrency||x.price_currency||'USD',priceSource:x.priceSource||x.price_source||'',priceUpdatedAt:x.priceUpdatedAt||x.price_updated_at||null,entrySource:x.entrySource||x.entry_source||'provider',notes:x.notes||'',addedAt:x.addedAt||x.added_at||new Date().toISOString()};if(old)await sb.from('collection_items').update(toRow({...obj,id:old.id})).eq('id',old.id);else await sb.from('collection_items').insert({...toRow(obj),added_at:obj.addedAt});}await loadCollection();renderDashboard();renderLibrary();toast('Backup restored');}
+async function exportJson(){
+  let copies=[],watchlist=[];
+  if(navigator.onLine&&currentUser){
+    const [c,w]=await Promise.all([
+      sb.from('collection_copies').select('*').eq('user_id',currentUser.id),
+      sb.from('card_watchlist').select('*').eq('user_id',currentUser.id)
+    ]);
+    copies=c.data||[];watchlist=w.data||[];
+  }
+  const backup={
+    format:'deckvault-backup',version:3,exportedAt:new Date().toISOString(),
+    collection:items,folders,folderMembership:serializeFolderMembership(),copies,watchlist
+  };
+  download(JSON.stringify(backup,null,2),'application/json','deckvault-backup-'+new Date().toISOString().slice(0,10)+'.json');
+}
+async function exportCsv(collectr){
+  const cols=collectr
+    ?['Game','Card Name','Set','Card Number','Variant','Condition','Language','Quantity','Provider ID','Current Price','Currency','Card State','Grading Company','Grade','Certification #','Price Paid','Purchase Date']
+    :['Game','Name','Set','Set ID','Card Number','Variant','Condition','Language','Quantity','Rarity','Provider ID','Price','Price Paid','Currency','Price Source','Card State','Grading Company','Grade','Certification #','Purchase Date','Added At','Updated At','Notes'];
+  const rows=items.map(x=>collectr
+    ?[x.game,x.name,x.setName,x.localId,x.variant,x.condition,x.language,x.quantity,x.cardId,x.price||'',x.priceCurrency||'',x.cardState,x.gradingCompany,x.grade,x.certNumber,x.pricePaid??'',x.purchaseDate||'']
+    :[x.game,x.name,x.setName,x.setId,x.localId,x.variant,x.condition,x.language,x.quantity,x.rarity,x.cardId,x.price||'',x.pricePaid??'',x.priceCurrency||'',x.priceSource||'',x.cardState,x.gradingCompany,x.grade,x.certNumber,x.purchaseDate||'',x.addedAt,x.updatedAt,x.notes||'']);
+  download([cols,...rows].map(r=>r.map(csv).join(',')).join('\n'),'text/csv;charset=utf-8',(collectr?'deckvault-collectr-transfer-':'deckvault-collection-')+new Date().toISOString().slice(0,10)+'.csv');
+}
+async function importBackup(file){
+  if(!navigator.onLine)return toast('Backup restore needs an internet connection');
+  const d=JSON.parse(await file.text());
+  if(!d||!Array.isArray(d.collection))throw new Error('Not a valid DeckVault backup.');
+  if(!confirm('Restore '+d.collection.length+' entries to this account?'))return;
+  for(const x of d.collection){
+    const cardId=x.cardId||x.card_id;if(!cardId)continue;
+    const variant=x.variant||'Normal',condition=x.condition||'Near Mint',language=x.language||'English';
+    const old=items.find(i=>i.game===(x.game||'pokemon')&&i.cardId===cardId&&i.variant===variant&&i.condition===condition&&i.language===language);
+    const obj={
+      game:x.game||'pokemon',cardId,name:x.name||'',localId:x.localId||x.local_id||'',setId:x.setId||x.set_id||'',setName:x.setName||x.set_name||'',rarity:x.rarity||'',
+      variant,condition,language,quantity:Number(x.quantity||1),image:x.image||x.image_url||'',price:x.price==null?null:Number(x.price),
+      pricePaid:(x.pricePaid??x.price_paid)==null?null:Number(x.pricePaid??x.price_paid),priceCurrency:x.priceCurrency||x.price_currency||'USD',
+      priceSource:x.priceSource||x.price_source||'',priceUpdatedAt:x.priceUpdatedAt||x.price_updated_at||null,entrySource:x.entrySource||x.entry_source||'provider',
+      cardState:x.cardState||x.card_state||'raw',gradingCompany:x.gradingCompany||x.grading_company||'',grade:x.grade||'',certNumber:x.certNumber||x.cert_number||'',
+      purchaseDate:x.purchaseDate||x.purchase_date||'',notes:x.notes||'',addedAt:x.addedAt||x.added_at||new Date().toISOString()
+    };
+    if(old)await sb.from('collection_items').update(toRow({...obj,id:old.id})).eq('id',old.id);
+    else await sb.from('collection_items').insert({...toRow(obj),added_at:obj.addedAt});
+  }
+  if(Array.isArray(d.watchlist)&&d.watchlist.length){
+    const rows=d.watchlist.map(w=>({...w,user_id:currentUser.id}));
+    await sb.from('card_watchlist').upsert(rows,{onConflict:'user_id,game,card_id,variant'});
+  }
+  await loadCollection();await loadFolders();saveOfflineSnapshot();renderDashboard();renderLibrary();toast('Backup restored');
+}
 
 function showStartupError(error,alreadyCaptured=false){
   if(!alreadyCaptured)captureAppError(error,{severity:'fatal',source:'startup'});
@@ -1430,7 +1487,16 @@ async function init(){
   $('#refreshErrorLog').onclick=()=>loadErrorBacklog().catch(e=>console.error(e));
   $('#copyDiagnostics').onclick=copyDiagnostics;
   $('#exportDiagnostics').onclick=exportDiagnostics;
-  $$('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
+  $('#universalSearchBtn').onclick=()=>{$('#universalSearchDialog').showModal();setTimeout(()=>$('#universalSearchInput').focus(),50);};
+  $('#universalSearchInput').oninput=()=>{clearTimeout(window.__dvSearchTimer);window.__dvSearchTimer=setTimeout(runUniversalSearch,180);};
+  $('#syncOfflineNowBtn').onclick=runOfflineSyncAndReload;
+  $('#viewOfflineConflictsBtn').onclick=()=>{renderOfflineConflicts();$('#offlineConflictsDialog').showModal();};
+  $('#addCopyBtn').onclick=addCopyRow;
+  $('#importCollectionCsv').onchange=async e=>{const file=e.target.files[0];if(file)try{await importCollectionCsv(file,$('#importCollectionFormat').value);}catch(err){console.error(err);$('#importCollectionStatus').textContent=err.message;}e.target.value='';};
+  updateOfflineQueueStatus();
+  $('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
+  installSwipeBack($('#libraryCardDialog'),()=>$('#libraryCardDialog').close());
+  installSwipeBack($('#imageZoomDialog'),()=>$('#imageZoomDialog').close());
   $('#signInForm').onsubmit=signIn;$('#signUpForm').onsubmit=signUp;$('#resetForm').onsubmit=resetPassword;
   $('#staySignedIn').checked=localStorage.getItem(STAY_SIGNED_IN_KEY)==='true';
   $('#staySignedIn').onchange=e=>localStorage.setItem(STAY_SIGNED_IN_KEY,e.target.checked?'true':'false');
@@ -1454,9 +1520,9 @@ async function init(){
     if(['lookup','scanner','marketplace','community'].includes(document.querySelector('.view.active')?.id))go('library');
   });
   window.addEventListener('online',()=>{
-    if(currentUser&&offlineMode){
+    if(currentUser){
       toast('Connection restored. Syncing DeckVault…');
-      showApp(currentUser).then(()=>syncErrorBacklog()).catch(err=>console.error(err));
+      syncOfflineQueue().then(()=>showApp(currentUser)).then(()=>syncErrorBacklog()).catch(err=>console.error(err));
     }
   });
     sb.auth.onAuthStateChange((event,session)=>{
