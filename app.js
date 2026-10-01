@@ -446,10 +446,11 @@ function mapImportedCsv(rows,format='auto'){
     const providerId=at(r,'provider id','tcgplayer id','card id','id');
     const price=Number(at(r,'current price','price','market price','market')||'');
     const paid=Number(at(r,'price paid','cost','purchase price')||'');
+    const override=Number(at(r,'value override','graded value','current value override')||'');
     return {
       game:'pokemon',cardId:providerId||('import:'+crypto.randomUUID()),name,localId,setId:'',setName,rarity:'',
       variant,condition,language,quantity:Math.max(1,qty),image:'',price:Number.isFinite(price)?price:null,
-      pricePaid:Number.isFinite(paid)?paid:null,priceCurrency:'USD',priceSource:'Imported CSV',priceUpdatedAt:null,
+      valueOverride:Number.isFinite(override)?override:null,pricePaid:Number.isFinite(paid)?paid:null,priceCurrency:'USD',priceSource:'Imported CSV',priceUpdatedAt:null,
       entrySource:providerId?'provider':'manual',cardState:'raw',gradingCompany:'',grade:'',certNumber:'',purchaseDate:'',
       notes:'Imported from '+format+' row '+(n+2),addedAt:new Date().toISOString()
     };
@@ -622,8 +623,9 @@ function folderItems(folderId){
     return copies?[{...x,quantity:copies}]:[];
   });
 }
+function effectivePrice(x){return x?.valueOverride!=null?Number(x.valueOverride):Number(x?.price||0);}
 function collectionValue(rows){
-  return rows.reduce((sum,x)=>sum+((x.priceCurrency==='USD'||!x.priceCurrency)?Number(x.price||0)*Number(x.quantity||0):0),0);
+  return rows.reduce((sum,x)=>sum+((x.priceCurrency==='USD'||!x.priceCurrency)?effectivePrice(x)*Number(x.quantity||0):0),0);
 }
 function renderFolderChips(){
   const box=$('#libraryFolderChips');if(!box)return;
@@ -736,7 +738,7 @@ async function saveManualCard(){
     language:$('#manualLanguage').value.trim()||'English',quantity:qty,image:$('#manualImageUrl').value.trim(),
     price:$('#manualCurrentValue').value===''?null:Number($('#manualCurrentValue').value),
     pricePaid:$('#manualPricePaid').value===''?null:Number($('#manualPricePaid').value),
-    priceCurrency:'USD',priceSource:'Manual',priceUpdatedAt:now,entrySource:'manual',
+    priceCurrency:'USD',priceSource:'Manual',priceUpdatedAt:now,entrySource:'manual',valueOverride:null,
     cardState:$('#manualCardState').value,gradingCompany:$('#manualGradingCompany').value.trim(),
     grade:$('#manualGrade').value.trim(),certNumber:$('#manualCertNumber').value.trim(),
     purchaseDate:$('#manualPurchaseDate').value||'',notes:'',addedAt:now,updatedAt:now
@@ -759,8 +761,8 @@ async function saveManualCard(){
   await loadCollection();await loadFolders();saveOfflineSnapshot();renderDashboard();renderLibrary();haptic();toast(name+' added');
 }
 
-function fromRow(r){return {id:r.id,game:r.game,cardId:r.card_id,name:r.name,localId:r.local_id,setId:r.set_id,setName:r.set_name,rarity:r.rarity,variant:r.variant,condition:r.condition,language:r.language,quantity:r.quantity,image:r.image_url,price:r.price==null?null:Number(r.price),pricePaid:r.price_paid==null?null:Number(r.price_paid),priceCurrency:r.price_currency,priceSource:r.price_source,priceUpdatedAt:r.price_updated_at,entrySource:r.entry_source||'provider',cardState:r.card_state||'raw',gradingCompany:r.grading_company||'',grade:r.grade||'',certNumber:r.cert_number||'',purchaseDate:r.purchase_date||'',notes:r.notes||'',addedAt:r.added_at,updatedAt:r.updated_at};}
-function toRow(x){return {user_id:currentUser.id,game:x.game,card_id:x.cardId,name:x.name,local_id:x.localId,set_id:x.setId,set_name:x.setName,rarity:x.rarity,variant:x.variant,condition:x.condition,language:x.language,quantity:x.quantity,image_url:x.image,price:x.price,price_paid:x.pricePaid,price_currency:x.priceCurrency,price_source:x.priceSource,price_updated_at:x.priceUpdatedAt,entry_source:x.entrySource||'provider',card_state:x.cardState||'raw',grading_company:x.gradingCompany||null,grade:x.grade||null,cert_number:x.certNumber||null,purchase_date:x.purchaseDate||null,notes:x.notes||'',updated_at:new Date().toISOString()};}
+function fromRow(r){return {id:r.id,game:r.game,cardId:r.card_id,name:r.name,localId:r.local_id,setId:r.set_id,setName:r.set_name,rarity:r.rarity,variant:r.variant,condition:r.condition,language:r.language,quantity:r.quantity,image:r.image_url,price:r.price==null?null:Number(r.price),valueOverride:r.value_override==null?null:Number(r.value_override),pricePaid:r.price_paid==null?null:Number(r.price_paid),priceCurrency:r.price_currency,priceSource:r.price_source,priceUpdatedAt:r.price_updated_at,entrySource:r.entry_source||'provider',cardState:r.card_state||'raw',gradingCompany:r.grading_company||'',grade:r.grade||'',certNumber:r.cert_number||'',purchaseDate:r.purchase_date||'',notes:r.notes||'',addedAt:r.added_at,updatedAt:r.updated_at};}
+function toRow(x){return {user_id:currentUser.id,game:x.game,card_id:x.cardId,name:x.name,local_id:x.localId,set_id:x.setId,set_name:x.setName,rarity:x.rarity,variant:x.variant,condition:x.condition,language:x.language,quantity:x.quantity,image_url:x.image,price:x.price,value_override:x.valueOverride??null,price_paid:x.pricePaid,price_currency:x.priceCurrency,price_source:x.priceSource,price_updated_at:x.priceUpdatedAt,entry_source:x.entrySource||'provider',card_state:x.cardState||'raw',grading_company:x.gradingCompany||null,grade:x.grade||null,cert_number:x.certNumber||null,purchase_date:x.purchaseDate||null,notes:x.notes||'',updated_at:new Date().toISOString()};}
 async function signIn(e){
   e.preventDefault();
   const stay=$('#staySignedIn')?.checked===true;
@@ -814,6 +816,7 @@ async function openCard(id){
       '<label>Grading company<select id="gradingCompany"><option value="">—</option><option>PSA</option><option>CGC</option><option>BGS</option><option>TAG</option><option>SGC</option><option>Other</option></select></label>'+
       '<label>Grade<input id="grade" maxlength="20" placeholder="e.g. 10"></label>'+
       '<label>Certification #<input id="certNumber" maxlength="80" placeholder="Optional"></label>'+
+      '<label>Value override <span class="muted">optional for graded cards</span><input id="valueOverride" type="number" min="0" step="0.01" placeholder="0.00"></label>'+
       '<label>Add to folder<select id="addFolder">'+folderOptions+'</select></label>'+
       '</div><div class="dialogactions"><button id="addCard" type="button" class="primary">Add to collection</button><button class="secondary" value="cancel">Cancel</button></div>';
     $('#lookupCardImage').onclick=()=>openImageZoom($('#lookupCardImage').src,currentCard.name);
@@ -836,6 +839,7 @@ async function addCurrent(){
     priceUpdatedAt:now,entrySource:'provider',cardState:$('#cardState').value,
     gradingCompany:$('#gradingCompany').value.trim(),grade:$('#grade').value.trim(),
     certNumber:$('#certNumber').value.trim(),purchaseDate:$('#purchaseDate').value||'',
+    valueOverride:$('#valueOverride').value===''?(old?.valueOverride??null):Number($('#valueOverride').value),
     notes:old?.notes||'',addedAt:old?.addedAt||now,updatedAt:now
   };
   const folderId=$('#addFolder').value;
@@ -932,13 +936,13 @@ function renderDashboard(){
   const total=items.reduce((sum,x)=>sum+((x.priceCurrency==='USD'||!x.priceCurrency)?Number(x.price||0)*Number(x.quantity||0):0),0);
   const spent=items.reduce((sum,x)=>sum+(x.pricePaid==null?0:Number(x.pricePaid)*Number(x.quantity||0)),0);
   const gain=total-spent,pct=spent?gain/spent*100:0;
-  const top=[...items].sort((a,b)=>Number(b.price||0)*b.quantity-Number(a.price||0)*a.quantity)[0];
+  const top=[...items].sort((a,b)=>effectivePrice(b)*b.quantity-effectivePrice(a)*a.quantity)[0];
   $('#collectionValue').textContent=money(total);$('#totalCards').textContent=count.toLocaleString();$('#uniqueCards').textContent=items.length.toLocaleString();
   $('#duplicates').textContent=Math.max(0,count-items.length).toLocaleString();
   $('#setCount').textContent=new Set(items.map(x=>x.game+':'+x.setId).filter(Boolean)).size.toLocaleString();
   $('#analyticsSpend').textContent=money(spent);$('#analyticsGain').textContent=(gain>=0?'+':'')+money(gain);$('#analyticsGainPct').textContent=(pct>=0?'+':'')+pct.toFixed(1)+'%';
   $('#analyticsGain').classList.toggle('negative',gain<0);
-  $('#analyticsTopCard').textContent=top?.name||'—';$('#analyticsTopCardValue').textContent=top?money(Number(top.price||0)*top.quantity,top.priceCurrency||'USD'):'$0.00';
+  $('#analyticsTopCard').textContent=top?.name||'—';$('#analyticsTopCardValue').textContent=top?money(effectivePrice(top)*top.quantity,top.priceCurrency||'USD'):'$0.00';
   const r=[...items].sort((a,b)=>new Date(b.addedAt)-new Date(a.addedAt)).slice(0,5),b=$('#recent');b.innerHTML='';
   if(!r.length){b.className='panel empty';b.textContent='No cards yet.';}else{b.className='panel';r.forEach(x=>b.appendChild(rowFor(x,true)));}
   renderDashboardExtras();
@@ -951,7 +955,8 @@ let activeHistoryRange='1m';
 
 function liveProviderValues(x,card,ebayRows=[]){
   const values=[];
-  if(x.price!=null)values.push({provider:'DeckVault',label:x.priceSource||'Stored value',value:Number(x.price),currency:x.priceCurrency||'USD',kind:'selected'});
+  if(x.valueOverride!=null)values.push({provider:'DeckVault',label:'Value override',value:Number(x.valueOverride),currency:x.priceCurrency||'USD',kind:'selected'});
+  else if(x.price!=null)values.push({provider:'DeckVault',label:x.priceSource||'Stored value',value:Number(x.price),currency:x.priceCurrency||'USD',kind:'selected'});
   if(card?.pricing?.tcgplayer){
     const tcg=variantPriceObject(card.pricing.tcgplayer,x.variant);
     if(tcg){
@@ -1127,7 +1132,7 @@ async function ensureCopyRows(x){
   const missing=Math.max(0,Number(x.quantity||0)-rows.length);
   if(missing){
     const inserts=Array.from({length:missing},()=>({
-      user_id:currentUser.id,collection_item_id:x.id,condition:x.condition,price_paid:x.pricePaid,
+      user_id:currentUser.id,collection_item_id:x.id,condition:x.condition,price_paid:x.pricePaid,current_value:x.valueOverride??null,
       purchase_date:x.purchaseDate||null,card_state:x.cardState||'raw',grading_company:x.gradingCompany||null,
       grade:x.grade||null,cert_number:x.certNumber||null
     }));
@@ -1148,6 +1153,7 @@ function renderCopyRows(rows){
       '<div class="fields">'+
       '<label>Condition<select data-copy-condition>'+['Near Mint','Lightly Played','Moderately Played','Heavily Played','Damaged'].map(v=>'<option '+(copy.condition===v?'selected':'')+'>'+v+'</option>').join('')+'</select></label>'+
       '<label>Price paid<input data-copy-paid type="number" min="0" step="0.01" value="'+esc(copy.price_paid??'')+'"></label>'+
+      '<label>Current value<input data-copy-value type="number" min="0" step="0.01" value="'+esc(copy.current_value??'')+'"></label>'+
       '<label>Purchase date<input data-copy-date type="date" value="'+esc(copy.purchase_date||'')+'"></label>'+
       '<label>Folder<select data-copy-folder>'+copyFolderOptions(copy.folder_id||'')+'</select></label>'+
       '<label>State<select data-copy-state><option value="raw" '+(copy.card_state==='raw'?'selected':'')+'>Raw</option><option value="graded" '+(copy.card_state==='graded'?'selected':'')+'>Graded</option></select></label>'+
@@ -1171,6 +1177,7 @@ async function saveCopyRow(id,node){
   const payload={
     condition:node.querySelector('[data-copy-condition]').value,
     price_paid:node.querySelector('[data-copy-paid]').value===''?null:Number(node.querySelector('[data-copy-paid]').value),
+    current_value:node.querySelector('[data-copy-value]').value===''?null:Number(node.querySelector('[data-copy-value]').value),
     purchase_date:node.querySelector('[data-copy-date]').value||null,
     folder_id:node.querySelector('[data-copy-folder]').value||null,
     card_state:node.querySelector('[data-copy-state]').value,
@@ -1187,7 +1194,7 @@ async function addCopyRow(){
   if(!currentCopyItem)return;
   const x=currentCopyItem;
   const {error}=await sb.from('collection_copies').insert({
-    user_id:currentUser.id,collection_item_id:x.id,condition:x.condition,price_paid:x.pricePaid,
+    user_id:currentUser.id,collection_item_id:x.id,condition:x.condition,price_paid:x.pricePaid,current_value:x.valueOverride??null,
     purchase_date:x.purchaseDate||null,card_state:x.cardState||'raw',grading_company:x.gradingCompany||null,
     grade:x.grade||null,cert_number:x.certNumber||null
   });
@@ -1207,7 +1214,7 @@ async function deleteCopyRow(id){
 
 async function openLibraryCardDetails(x){
   const box=$('#libraryCardDetails');
-  const total=Number(x.price||0)*Number(x.quantity||0);
+  const total=effectivePrice(x)*Number(x.quantity||0);
   const gradeLabel=x.cardState==='graded'?((x.gradingCompany||'Graded')+(x.grade?' '+x.grade:'')+(x.certNumber?' • Cert '+x.certNumber:'')):'Raw';
   const img=x.image?'<img id="libraryDetailImage" src="'+esc(imageUrl(x.image,'high'))+'" alt="'+esc(x.name)+'">':'<div class="librarydetailplaceholder">DV</div>';
   box.innerHTML='<div class="librarydetailtop">'+img+'<div><div class="eyebrow">'+esc(x.setName||'Collection card')+'</div><h2>'+esc(x.name)+'</h2><div class="muted">'+(x.localId?'#'+esc(x.localId)+' • ':'')+esc(x.variant)+' • '+esc(x.condition)+'</div><div class="gradebadge">'+esc(gradeLabel)+'</div>'+
@@ -1224,7 +1231,7 @@ async function openLibraryCardDetails(x){
   $('#watchCardBtn').onclick=()=>saveWatchState(x);$('#watchSaveBtn').onclick=()=>saveWatchState(x);$('#watchRemoveBtn').onclick=()=>removeWatchState(x);
   activeHistoryRange='1m';
   if(offlineMode||!navigator.onLine){
-    $('#providerValueGrid').innerHTML='<div class="providervalue selected"><span>DeckVault</span><strong>'+money(x.price,x.priceCurrency||'USD')+'</strong><small>'+esc(x.priceSource||'Last saved price')+'</small></div>';
+    $('#providerValueGrid').innerHTML='<div class="providervalue selected"><span>DeckVault</span><strong>'+money(effectivePrice(x),x.priceCurrency||'USD')+'</strong><small>'+esc(x.valueOverride!=null?'Value override':(x.priceSource||'Last saved price'))+'</small></div>';
     $('#priceHistoryMetric').innerHTML='<option>Offline</option>';$('#priceHistoryChart').innerHTML='<div class="historyempty">Price-history data needs a connection. Your last saved card value is shown above.</div>';
     $('#priceHistorySummary').textContent=offlineSnapshotAt?'Library synced '+new Date(offlineSnapshotAt).toLocaleString():'Using your saved offline library.';
     $('#ebayCompStatus').textContent='Offline';$('#ebayCompList').innerHTML='<div class="empty">Recent sales require an internet connection.</div>';$('#openEbaySold').classList.add('hidden');
@@ -1241,7 +1248,7 @@ async function openLibraryCardDetails(x){
 }
 function libraryCardFor(x){
   const e=document.createElement('article');e.className='librarycard';
-  const total=Number(x.price||0)*Number(x.quantity||0);
+  const total=effectivePrice(x)*Number(x.quantity||0);
   const img=x.image?'<img loading="lazy" src="'+esc(imageUrl(x.image))+'" alt="'+esc(x.name)+'">':'<div class="librarycardplaceholder">DV</div>';
   const gradeLine=x.cardState==='graded'?'<span class="librarygrade">'+esc((x.gradingCompany||'Graded')+(x.grade?' '+x.grade:''))+'</span>':'';
   e.innerHTML='<div class="librarycardimage">'+img+'<span class="qtybadge">×'+x.quantity+'</span></div><div class="librarycardbody"><strong>'+esc(x.name)+'</strong><span>'+esc(x.setName||'No set')+(x.localId?' • #'+esc(x.localId):'')+'</span><span>'+esc(x.variant)+' • '+esc(x.condition)+'</span>'+gradeLine+'<div class="libraryprices"><div><small>Value</small><b>'+money(total,x.priceCurrency||'USD')+'</b></div><div><small>Paid ea.</small><b>'+money(x.pricePaid,'USD')+'</b></div></div><div class="librarycardactions"><button class="secondary" data-folders>Folders</button><button data-dec>−</button><button data-inc>＋</button><button class="librarydelete" data-delete>×</button></div></div>';
@@ -1260,8 +1267,8 @@ function renderLibrary(){
   a.sort((x,y)=>{
     if(sort==='name_asc')return x.name.localeCompare(y.name);
     if(sort==='name_desc')return y.name.localeCompare(x.name);
-    if(sort==='value_desc')return Number(y.price||0)*y.quantity-Number(x.price||0)*x.quantity;
-    if(sort==='value_asc')return Number(x.price||0)*x.quantity-Number(y.price||0)*y.quantity;
+    if(sort==='value_desc')return effectivePrice(y)*y.quantity-effectivePrice(x)*x.quantity;
+    if(sort==='value_asc')return effectivePrice(x)*x.quantity-effectivePrice(y)*y.quantity;
     if(sort==='paid_desc')return Number(y.pricePaid??-1)-Number(x.pricePaid??-1);
     if(sort==='paid_asc')return Number(x.pricePaid??Number.MAX_SAFE_INTEGER)-Number(y.pricePaid??Number.MAX_SAFE_INTEGER);
     return new Date(y.addedAt)-new Date(x.addedAt);
@@ -1442,11 +1449,11 @@ async function exportJson(){
 }
 async function exportCsv(collectr){
   const cols=collectr
-    ?['Game','Card Name','Set','Card Number','Variant','Condition','Language','Quantity','Provider ID','Current Price','Currency','Card State','Grading Company','Grade','Certification #','Price Paid','Purchase Date']
-    :['Game','Name','Set','Set ID','Card Number','Variant','Condition','Language','Quantity','Rarity','Provider ID','Price','Price Paid','Currency','Price Source','Card State','Grading Company','Grade','Certification #','Purchase Date','Added At','Updated At','Notes'];
+    ?['Game','Card Name','Set','Card Number','Variant','Condition','Language','Quantity','Provider ID','Current Price','Value Override','Currency','Card State','Grading Company','Grade','Certification #','Price Paid','Purchase Date']
+    :['Game','Name','Set','Set ID','Card Number','Variant','Condition','Language','Quantity','Rarity','Provider ID','Price','Value Override','Price Paid','Currency','Price Source','Card State','Grading Company','Grade','Certification #','Purchase Date','Added At','Updated At','Notes'];
   const rows=items.map(x=>collectr
-    ?[x.game,x.name,x.setName,x.localId,x.variant,x.condition,x.language,x.quantity,x.cardId,x.price||'',x.priceCurrency||'',x.cardState,x.gradingCompany,x.grade,x.certNumber,x.pricePaid??'',x.purchaseDate||'']
-    :[x.game,x.name,x.setName,x.setId,x.localId,x.variant,x.condition,x.language,x.quantity,x.rarity,x.cardId,x.price||'',x.pricePaid??'',x.priceCurrency||'',x.priceSource||'',x.cardState,x.gradingCompany,x.grade,x.certNumber,x.purchaseDate||'',x.addedAt,x.updatedAt,x.notes||'']);
+    ?[x.game,x.name,x.setName,x.localId,x.variant,x.condition,x.language,x.quantity,x.cardId,x.price||'',x.valueOverride??'',x.priceCurrency||'',x.cardState,x.gradingCompany,x.grade,x.certNumber,x.pricePaid??'',x.purchaseDate||'']
+    :[x.game,x.name,x.setName,x.setId,x.localId,x.variant,x.condition,x.language,x.quantity,x.rarity,x.cardId,x.price||'',x.valueOverride??'',x.pricePaid??'',x.priceCurrency||'',x.priceSource||'',x.cardState,x.gradingCompany,x.grade,x.certNumber,x.purchaseDate||'',x.addedAt,x.updatedAt,x.notes||'']);
   download([cols,...rows].map(r=>r.map(csv).join(',')).join('\n'),'text/csv;charset=utf-8',(collectr?'deckvault-collectr-transfer-':'deckvault-collection-')+new Date().toISOString().slice(0,10)+'.csv');
 }
 async function importBackup(file){
@@ -1461,7 +1468,7 @@ async function importBackup(file){
     const obj={
       game:x.game||'pokemon',cardId,name:x.name||'',localId:x.localId||x.local_id||'',setId:x.setId||x.set_id||'',setName:x.setName||x.set_name||'',rarity:x.rarity||'',
       variant,condition,language,quantity:Number(x.quantity||1),image:x.image||x.image_url||'',price:x.price==null?null:Number(x.price),
-      pricePaid:(x.pricePaid??x.price_paid)==null?null:Number(x.pricePaid??x.price_paid),priceCurrency:x.priceCurrency||x.price_currency||'USD',
+      valueOverride:(x.valueOverride??x.value_override)==null?null:Number(x.valueOverride??x.value_override),pricePaid:(x.pricePaid??x.price_paid)==null?null:Number(x.pricePaid??x.price_paid),priceCurrency:x.priceCurrency||x.price_currency||'USD',
       priceSource:x.priceSource||x.price_source||'',priceUpdatedAt:x.priceUpdatedAt||x.price_updated_at||null,entrySource:x.entrySource||x.entry_source||'provider',
       cardState:x.cardState||x.card_state||'raw',gradingCompany:x.gradingCompany||x.grading_company||'',grade:x.grade||'',certNumber:x.certNumber||x.cert_number||'',
       purchaseDate:x.purchaseDate||x.purchase_date||'',notes:x.notes||'',addedAt:x.addedAt||x.added_at||new Date().toISOString()
