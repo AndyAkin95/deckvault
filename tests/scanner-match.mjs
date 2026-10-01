@@ -34,12 +34,14 @@ vm.runInContext(source,ctx,{filename:'scanner matcher'});
 const parse=text=>ctx.parseCardFraction(text);
 assert.equal(parse(' 161 / 197 ')?.localId,'161');
 assert.equal(parse(' 161 / 197 ')?.denominator,197);
-assert.equal(parse('TG05/TG30')?.localId,'TG5');
+assert.equal(parse('TG05/TG30')?.localId,'TG05');
 assert.equal(parse('TG05/TG30')?.denominator,30);
 assert.equal(parse('O61 / I97')?.localId,'61');
 assert.equal(parse('O61 / I97')?.denominator,197);
 assert.equal(parse('random label with no number'),null);
 assert.equal(ctx.parseCardFractions('11/197 ... 161/197')[0].localId,'161');
+assert.equal(parse('001/102')?.localId,'001');
+assert.equal(ctx.normalizeCollectorId('TG05'),'TG5');
 
 let candidates=await ctx.lookupScanCandidates({localId:'161',denominator:197,raw:'161/197'});
 const ids=Array.from(candidates,x=>x.id);
