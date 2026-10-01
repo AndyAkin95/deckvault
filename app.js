@@ -1023,8 +1023,8 @@ async function exportJson(){download(JSON.stringify({format:'deckvault-backup',v
 async function exportCsv(collectr){const cols=collectr?['Game','Card Name','Set','Card Number','Variant','Condition','Language','Quantity','Provider ID','Current Price','Currency']:['Game','Name','Set','Set ID','Card Number','Variant','Condition','Language','Quantity','Rarity','Provider ID','Price','Price Paid','Currency','Price Source','Added At','Updated At','Notes'];const rows=items.map(x=>collectr?[x.game,x.name,x.setName,x.localId,x.variant,x.condition,x.language,x.quantity,x.cardId,x.price||'',x.priceCurrency||'']:[x.game,x.name,x.setName,x.setId,x.localId,x.variant,x.condition,x.language,x.quantity,x.rarity,x.cardId,x.price||'',x.pricePaid??'',x.priceCurrency||'',x.priceSource||'',x.addedAt,x.updatedAt,x.notes||'']);download([cols,...rows].map(r=>r.map(csv).join(',')).join('\n'),'text/csv;charset=utf-8',(collectr?'deckvault-collectr-transfer-':'deckvault-collection-')+new Date().toISOString().slice(0,10)+'.csv');}
 async function importBackup(file){const d=JSON.parse(await file.text());if(!d||!Array.isArray(d.collection))throw new Error('Not a valid DeckVault backup.');if(!confirm('Restore '+d.collection.length+' entries to this account?'))return;for(const x of d.collection){const cardId=x.cardId||x.card_id;if(!cardId)continue;const variant=x.variant||'Normal',condition=x.condition||'Near Mint',language=x.language||'English';const old=items.find(i=>i.game===(x.game||'pokemon')&&i.cardId===cardId&&i.variant===variant&&i.condition===condition&&i.language===language);const obj={game:x.game||'pokemon',cardId,name:x.name||'',localId:x.localId||x.local_id||'',setId:x.setId||x.set_id||'',setName:x.setName||x.set_name||'',rarity:x.rarity||'',variant,condition,language,quantity:Number(x.quantity||1),image:x.image||x.image_url||'',price:x.price==null?null:Number(x.price),pricePaid:(x.pricePaid??x.price_paid)==null?null:Number(x.pricePaid??x.price_paid),priceCurrency:x.priceCurrency||x.price_currency||'USD',priceSource:x.priceSource||x.price_source||'',priceUpdatedAt:x.priceUpdatedAt||x.price_updated_at||null,entrySource:x.entrySource||x.entry_source||'provider',notes:x.notes||'',addedAt:x.addedAt||x.added_at||new Date().toISOString()};if(old)await sb.from('collection_items').update(toRow({...obj,id:old.id})).eq('id',old.id);else await sb.from('collection_items').insert({...toRow(obj),added_at:obj.addedAt});}await loadCollection();renderDashboard();renderLibrary();toast('Backup restored');}
 
-function showStartupError(error){
-  captureAppError(error,{severity:'fatal',source:'startup'});
+function showStartupError(error,alreadyCaptured=false){
+  if(!alreadyCaptured)captureAppError(error,{severity:'fatal',source:'startup'});
   originalConsoleError('DeckVault startup error',error);
   const box=$('#startupError');
   if(!box)return;
@@ -1032,12 +1032,14 @@ function showStartupError(error){
   box.classList.remove('hidden');
 }
 window.addEventListener('error',e=>{
-  captureAppError(e.error||new Error(e.message||'Window error'),{source:'window.error',context:{filename:e.filename||'',lineno:e.lineno||'',colno:e.colno||''}});
-  showStartupError(e.error||e.message);
+  const err=e.error||new Error(e.message||'Window error');
+  captureAppError(err,{source:'window.error',context:{filename:e.filename||'',lineno:e.lineno||'',colno:e.colno||''}});
+  showStartupError(err,true);
 });
 window.addEventListener('unhandledrejection',e=>{
-  captureAppError(e.reason||new Error('Unhandled promise rejection'),{source:'unhandledrejection'});
-  showStartupError(e.reason);
+  const err=e.reason instanceof Error?e.reason:new Error(String(e.reason||'Unhandled promise rejection'));
+  captureAppError(err,{source:'unhandledrejection'});
+  showStartupError(err,true);
 });
 async function init(){
   $('#startupReloadBtn').onclick=()=>location.reload();
@@ -1093,7 +1095,7 @@ async function init(){
       swReloaded=true;
       location.reload();
     });
-    navigator.serviceWorker.register('./sw.js?v=20',{updateViaCache:'none'})
+    navigator.serviceWorker.register('./sw.js?build='+encodeURIComponent(APP_BUILD),{updateViaCache:'none'})
       .then(reg=>reg.update())
       .catch(console.warn);
   }
