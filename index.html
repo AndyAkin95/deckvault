@@ -10,7 +10,7 @@
   <title>DeckVault</title>
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=11">
+  <link rel="stylesheet" href="styles.css?v=12">
 </head>
 <body>
 <section id="authGate" class="authgate">
@@ -169,9 +169,37 @@
   </section>
 
   <section id="library" class="view">
-    <div class="pagehead"><div><div class="eyebrow">YOUR CARDS</div><h1>Collection</h1></div><button id="refreshPrices" class="ghost">Refresh prices</button></div>
-    <div class="toolbar"><input id="librarySearch" placeholder="Search name, set, number…"><select id="librarySort"><option value="recent">Recently added</option><option value="name">Name A–Z</option><option value="set">Set</option><option value="value">Highest value</option><option value="quantity">Highest quantity</option></select></div>
-    <div id="libraryList" class="library"></div>
+    <div class="pagehead">
+      <div><div class="eyebrow">YOUR CARDS</div><h1 id="libraryTitle">Main Library</h1></div>
+      <button id="refreshPrices" class="ghost">Refresh prices</button>
+    </div>
+
+    <div class="libraryhero">
+      <div class="eyebrow">CURRENT VALUE</div>
+      <div id="libraryValue" class="big">$0.00</div>
+      <div id="libraryValueLabel" class="muted">Entire collection</div>
+      <div id="libraryFolderChips" class="folderchips"></div>
+    </div>
+
+    <div class="libraryactions">
+      <button id="manualAddCardBtn" class="primary" type="button">＋ Add card manually</button>
+      <button id="newFolderBtn" class="secondary" type="button">＋ New folder</button>
+      <button id="manageFoldersBtn" class="secondary" type="button">Manage folders</button>
+    </div>
+
+    <div class="toolbar librarytoolbar">
+      <input id="librarySearch" placeholder="Search name, set, number…">
+      <select id="librarySort">
+        <option value="recent">Recently added</option>
+        <option value="name_asc">Alphabetical A–Z</option>
+        <option value="name_desc">Alphabetical Z–A</option>
+        <option value="value_desc">Current value: high to low</option>
+        <option value="value_asc">Current value: low to high</option>
+        <option value="paid_desc">Price paid: high to low</option>
+        <option value="paid_asc">Price paid: low to high</option>
+      </select>
+    </div>
+    <div id="libraryList" class="librarygrid"></div>
   </section>
 
   <section id="marketplace" class="view">
@@ -209,13 +237,49 @@
   </section>
 
   <section id="community" class="view">
-    <div class="pagehead"><div><div class="eyebrow">COMMUNITY</div><h1>Collector profiles</h1></div></div>
-    <div class="panel form">
-      <label>Find a username<input id="communitySearch" placeholder="Search username…"></label>
-      <button id="communitySearchBtn" class="primary">Search profiles</button>
+    <div class="pagehead"><div><div class="eyebrow">COMMUNITY</div><h1>DeckVault Community</h1></div></div>
+
+    <div class="communitytabs">
+      <button class="active" data-community-tab="chat" type="button">Live Chat</button>
+      <button data-community-tab="forums" type="button">Forums</button>
+      <button data-community-tab="profiles" type="button">Collectors</button>
     </div>
-    <div id="communityResults" class="profilegrid"></div>
-    <div id="publicProfileView" class="hidden"></div>
+
+    <div id="communityChatPane" class="communitypane active">
+      <div class="panel chatpanel">
+        <div class="pagehead"><div><div class="eyebrow">LIVE</div><h2>Community Chat</h2></div><button id="refreshChatBtn" class="ghost" type="button">Refresh</button></div>
+        <div id="communityChatMessages" class="chatmessages"></div>
+        <form id="communityChatForm" class="chatcomposer">
+          <input id="communityChatInput" maxlength="1000" autocomplete="off" placeholder="Message the community…">
+          <button class="primary" type="submit">Send</button>
+        </form>
+      </div>
+    </div>
+
+    <div id="communityForumsPane" class="communitypane">
+      <div id="forumListView">
+        <div class="pagehead"><div><div class="eyebrow">DISCUSSIONS</div><h2>Forums</h2></div><button id="newForumThreadBtn" class="primary" type="button">New thread</button></div>
+        <div id="forumThreads" class="forumthreads"></div>
+      </div>
+      <div id="forumThreadView" class="hidden">
+        <button id="backToForumsBtn" class="ghost" type="button">← Back to forums</button>
+        <div id="forumThreadHeader" class="panel forumthreadheader"></div>
+        <div id="forumPosts" class="forumposts"></div>
+        <form id="forumReplyForm" class="panel form">
+          <label>Reply<textarea id="forumReplyBody" maxlength="5000" placeholder="Write a reply…"></textarea></label>
+          <button class="primary" type="submit">Post reply</button>
+        </form>
+      </div>
+    </div>
+
+    <div id="communityProfilesPane" class="communitypane">
+      <div class="panel form">
+        <label>Find a username<input id="communitySearch" placeholder="Search username…"></label>
+        <button id="communitySearchBtn" class="primary">Search profiles</button>
+      </div>
+      <div id="communityResults" class="profilegrid"></div>
+      <div id="publicProfileView" class="hidden"></div>
+    </div>
   </section>
 
   <section id="settings" class="view">
@@ -332,6 +396,7 @@
   <button data-go="scanner" class="scan">◎<small>Scan</small></button>
   <button data-go="library">▦<small>Library</small></button>
   <button data-go="marketplace">⇄<small>Trade</small></button>
+  <button data-go="community">♢<small>Community</small></button>
   <button data-go="settings">⚙<small>Settings</small></button>
 </nav>
 </div>
@@ -379,9 +444,69 @@
     </div>
   </form>
 </dialog>
+
+<dialog id="manualCardDialog">
+  <form method="dialog">
+    <button class="close" value="cancel">×</button>
+    <div class="eyebrow">MANUAL ENTRY</div>
+    <h2>Add card to library</h2>
+    <div class="fields manualfields">
+      <label>Card game<select id="manualGame"><option value="pokemon">Pokémon TCG</option><option value="other">Other</option></select></label>
+      <label>Card name<input id="manualName" maxlength="120" required placeholder="Card name"></label>
+      <label>Set<input id="manualSetName" maxlength="120" placeholder="Set name"></label>
+      <label>Card number<input id="manualLocalId" maxlength="40" placeholder="e.g. 199/165"></label>
+      <label>Variant<input id="manualVariant" maxlength="60" value="Normal"></label>
+      <label>Condition<select id="manualCondition"><option>Near Mint</option><option>Lightly Played</option><option>Moderately Played</option><option>Heavily Played</option><option>Damaged</option></select></label>
+      <label>Language<input id="manualLanguage" maxlength="40" value="English"></label>
+      <label>Quantity<input id="manualQuantity" type="number" min="1" value="1"></label>
+      <label>Current value each<input id="manualCurrentValue" type="number" min="0" step="0.01" placeholder="0.00"></label>
+      <label>Price paid each<input id="manualPricePaid" type="number" min="0" step="0.01" placeholder="0.00"></label>
+      <label class="fullfield">Card image URL <span class="muted">optional</span><input id="manualImageUrl" type="url" placeholder="https://…"></label>
+      <label class="fullfield">Add to folder<select id="manualFolder"><option value="">Main Library only</option></select></label>
+    </div>
+    <div id="manualCardMessage" class="authmessage"></div>
+    <div class="dialogactions">
+      <button id="saveManualCardBtn" class="primary" type="button">Add card</button>
+      <button class="secondary" value="cancel">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="folderAssignDialog">
+  <form method="dialog">
+    <button class="close" value="cancel">×</button>
+    <div class="eyebrow">LIBRARY FOLDERS</div>
+    <h2 id="folderAssignTitle">Manage card folders</h2>
+    <div id="folderAssignOptions" class="folderassignoptions"></div>
+    <button id="saveFolderAssignmentsBtn" class="primary wide" type="button">Save folders</button>
+  </form>
+</dialog>
+
+<dialog id="manageFoldersDialog">
+  <form method="dialog">
+    <button class="close" value="cancel">×</button>
+    <div class="eyebrow">LIBRARY</div>
+    <h2>Manage folders</h2>
+    <div id="folderManagerList" class="liststack"></div>
+  </form>
+</dialog>
+
+<dialog id="newForumThreadDialog">
+  <form method="dialog">
+    <button class="close" value="cancel">×</button>
+    <div class="eyebrow">COMMUNITY FORUMS</div>
+    <h2>Start a new thread</h2>
+    <div class="form">
+      <label>Title<input id="newForumTitle" maxlength="160" placeholder="Thread title"></label>
+      <label>Post<textarea id="newForumBody" maxlength="5000" placeholder="Start the discussion…"></textarea></label>
+    </div>
+    <div id="newForumMessage" class="authmessage"></div>
+    <button id="createForumThreadBtn" class="primary wide" type="button">Create thread</button>
+  </form>
+</dialog>
 <div id="toast" class="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js"></script>
-<script src="app.js?v=10" defer></script>
+<script src="app.js?v=12" defer></script>
 <script src="social.js?v=11" defer></script>
 </body>
 </html>
