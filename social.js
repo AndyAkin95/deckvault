@@ -623,7 +623,7 @@ async function loadPrivateInbox(){
   const conversationIds=rows.map(x=>x.id);
   const otherIds=[...new Set(rows.map(x=>x.user_one===currentUser.id?x.user_two:x.user_one))];
   const [{data:messages,error:messageError},{data:reads},profiles]=await Promise.all([
-    sb.from('private_messages').select('id,conversation_id,sender_id,body,created_at')
+    sb.from('private_messages').select('id,conversation_id,sender_id,body,created_at,reference_type,reference_id,reference_label')
       .in('conversation_id',conversationIds).order('created_at',{ascending:false}).limit(300),
     sb.from('private_conversation_reads').select('conversation_id,last_read_at')
       .eq('user_id',currentUser.id).in('conversation_id',conversationIds),
@@ -678,47 +678,48 @@ async function markPrivateConversationRead(conversationId){
 
 async function openPrivateConversation(conversationId,otherUserId){
   if(!currentUser)return;
-  activePrivateConversationId=conversationId;
-  activePrivateOtherUserId=otherUserId;
+  activePrivateConversationId=conversationId;activePrivateOtherUserId=otherUserId;
   const [{data:messages,error},profiles]=await Promise.all([
-    sb.from('private_messages').select('id,conversation_id,sender_id,body,created_at')
+    sb.from('private_messages').select('id,conversation_id,sender_id,body,created_at,reference_type,reference_id,reference_label')
       .eq('conversation_id',conversationId).order('created_at',{ascending:true}).limit(250),
     profileMapFor([otherUserId])
   ]);
   if(error){console.error(error);return toast('Could not open private conversation');}
   const p=profiles[otherUserId]||{};
-  $('#privateConversationEmpty').classList.add('hidden');
-  $('#privateConversationView').classList.remove('hidden');
+  $('#privateConversationEmpty').classList.add('hidden');$('#privateConversationView').classList.remove('hidden');
   $('#privateConversationHeader').innerHTML=(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+
-    '<div><div class="eyebrow">PRIVATE MESSAGE</div><strong>@'+esc(p.username||'collector')+'</strong><span>'+esc(p.display_name||'')+'</span></div>';
+    '<div><div class="eyebrow">PRIVATE MESSAGE</div><strong>@'+esc(p.username||'collector')+'</strong><span>'+esc(p.display_name||'')+'</span></div>'+
+    '<div class="conversationactions"><button class="ghost" data-report-user type="button">Report</button><button class="ghost" data-block-user type="button">'+(blockedUserIds.has(otherUserId)?'Unblock':'Block')+'</button></div>';
+  $('#privateConversationHeader [data-report-user]').onclick=()=>openReport({type:'user',userId:otherUserId,label:'Report @'+(p.username||'collector'),category:'harassment'});
+  $('#privateConversationHeader [data-block-user]').onclick=()=>blockedUserIds.has(otherUserId)?unblockUser(otherUserId):blockUser(otherUserId);
   const box=$('#privateMessageThread');box.innerHTML='';
   if(!messages?.length)box.innerHTML='<div class="empty">No messages yet. Say hello.</div>';
   else messages.forEach(m=>{
-    const mine=m.sender_id===currentUser.id;
-    const e=document.createElement('div');e.className='privatemessage'+(mine?' mine':'');
-    e.innerHTML='<div class="privatebubble"><p>'+esc(m.body)+'</p><small>'+new Date(m.created_at).toLocaleString()+'</small></div>';
+    const mine=m.sender_id===currentUser.id,e=document.createElement('div');e.className='privatemessage'+(mine?' mine':'');
+    const ref=m.reference_label?'<div class="messageref">Regarding: '+esc(m.reference_label)+'</div>':'';
+    e.innerHTML='<div class="privatebubble">'+ref+'<p>'+esc(m.body)+'</p><small>'+new Date(m.created_at).toLocaleString()+'</small>'+
+      (!mine?'<button class="messagereport" type="button">Report</button>':'')+'</div>';
+    const report=e.querySelector('.messagereport');
+    if(report)report.onclick=()=>openReport({type:'private_message',id:m.id,userId:m.sender_id,label:'Report private message from @'+(p.username||'collector'),category:'harassment'});
     box.appendChild(e);
   });
-  box.scrollTop=box.scrollHeight;
-  await markPrivateConversationRead(conversationId);
-  await loadPrivateInbox();
+  if(pendingPrivateReference){
+    $('#privateMessageInput').placeholder='Message @'+(p.username||'collector')+' about '+pendingPrivateReference.label+'…';
+  }else $('#privateMessageInput').placeholder='Write a private message…';
+  box.scrollTop=box.scrollHeight;await markPrivateConversationRead(conversationId);await loadPrivateInbox();
 }
-
 async function sendPrivateMessage(e){
   e.preventDefault();
   if(!activePrivateConversationId)return toast('Choose a conversation first');
-  const input=$('#privateMessageInput'),body=input.value.trim();
-  if(!body)return;
+  const input=$('#privateMessageInput'),body=input.value.trim();if(!body)return;
+  const ref=pendingPrivateReference;
   const {error}=await sb.from('private_messages').insert({
-    conversation_id:activePrivateConversationId,
-    sender_id:currentUser.id,
-    body
+    conversation_id:activePrivateConversationId,sender_id:currentUser.id,body,
+    reference_type:ref?.type||null,reference_id:ref?.id?String(ref.id):null,reference_label:ref?.label||null
   });
-  if(error){console.error(error);return toast('Could not send private message');}
-  input.value='';
-  await openPrivateConversation(activePrivateConversationId,activePrivateOtherUserId);
+  if(error){console.error(error);return toast(error.code==='42501'?'Messaging is unavailable between these accounts':'Could not send private message');}
+  pendingPrivateReference=null;input.value='';haptic?.(18);await openPrivateConversation(activePrivateConversationId,activePrivateOtherUserId);
 }
-
 async function findPrivateMessageRecipients(){
   if(!currentUser)return;
   const q=$('#privateMessageSearch').value.trim();
@@ -731,8 +732,9 @@ async function findPrivateMessageRecipients(){
     .ilike('username','%'+safe+'%')
     .limit(8);
   if(error){console.error(error);box.innerHTML='<div class="empty compact">Could not search collectors.</div>';return;}
-  if(!data?.length){box.innerHTML='<div class="empty compact">No collectors found.</div>';return;}
-  data.forEach(p=>{
+  const visible=(data||[]).filter(p=>!blockedUserIds.has(p.id));
+  if(!visible.length){box.innerHTML='<div class="empty compact">No collectors found.</div>';return;}
+  visible.forEach(p=>{
     const b=document.createElement('button');b.type='button';b.className='recipientrow';
     b.innerHTML=(p.avatar_url?'<img src="'+esc(p.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+
       '<div><strong>@'+esc(p.username||'collector')+'</strong><span>'+esc(p.display_name||'')+'</span></div><b>Message</b>';
@@ -758,19 +760,15 @@ async function getOrCreatePrivateConversation(otherUserId){
   throw created.error;
 }
 
-async function startPrivateConversation(otherUserId){
+async function startPrivateConversation(otherUserId,reference=null){
   try{
-    const c=await getOrCreatePrivateConversation(otherUserId);
-    if(!c)return;
-    switchCommunityTab('messages');
-    $('#privateMessageSearchResults').innerHTML='';
-    $('#privateMessageSearch').value='';
+    if(blockedUserIds.has(otherUserId))return toast('Unblock this collector before messaging them');
+    const c=await getOrCreatePrivateConversation(otherUserId);if(!c)return;
+    pendingPrivateReference=reference||null;
+    switchCommunityTab('messages');$('#privateMessageSearchResults').innerHTML='';$('#privateMessageSearch').value='';
     await openPrivateConversation(c.id,otherUserId);
-  }catch(e){
-    console.error(e);toast('Could not start private conversation');
-  }
+  }catch(e){console.error(e);toast(e?.code==='42501'?'Messaging is unavailable between these accounts':'Could not start private conversation');}
 }
-
 function startPrivateMessageRealtime(){
   if(privateMessageChannel||!currentUser)return;
   privateMessageChannel=sb.channel('deckvault-private-messages-'+currentUser.id)
