@@ -843,12 +843,80 @@ async function addCurrent(){
   $('#cardDialog').close();
   await loadCollection();await loadFolders();saveOfflineSnapshot();renderDashboard();renderLibrary();haptic();toast(currentCard.name+' saved');
 }
-function rowFor(x,compact){const e=document.createElement('div');e.className='cardrow';const total=(Number(x.price)||0)*(Number(x.quantity)||0);e.innerHTML='<img loading="lazy" src="'+esc(imageUrl(x.image))+'"><div class="cardmain"><div class="cardtitle">'+esc(x.name)+'</div><div class="cardmeta">'+esc(x.setName)+' • #'+esc(x.localId)+' • '+esc(x.variant)+' • '+esc(x.condition)+'</div>'+(compact?'':'<div class="qty"><button data-a="dec">−</button><span>'+x.quantity+'</span><button data-a="inc">+</button><button data-a="del">×</button></div>')+'</div><div class="cardprice">'+money(total,x.priceCurrency||'USD')+'<div class="cardmeta">×'+x.quantity+'</div></div>';if(!compact){e.querySelector('[data-a="inc"]').onclick=()=>adjust(x,1);e.querySelector('[data-a="dec"]').onclick=()=>adjust(x,-1);e.querySelector('[data-a="del"]').onclick=()=>removeEntry(x);}return e;}
-async function adjust(x,d){if(!requireOnline('Changing quantities needs an internet connection.'))return;const q=x.quantity+d;if(q<=0)return removeEntry(x);const {error}=await sb.from('collection_items').update({quantity:q,updated_at:new Date().toISOString()}).eq('id',x.id);if(error)return toast('Could not update quantity');await loadCollection();saveOfflineSnapshot();renderLibrary();renderDashboard();}
-async function removeEntry(x){if(!requireOnline('Removing cards needs an internet connection.'))return;if(!confirm('Remove '+x.name+' from this collection?'))return;const {error}=await sb.from('collection_items').delete().eq('id',x.id);if(error)return toast('Could not remove card');await loadCollection();await loadFolders();saveOfflineSnapshot();renderLibrary();renderDashboard();}
-function renderDashboard(){const count=items.reduce((s,x)=>s+Number(x.quantity||0),0),total=items.reduce((s,x)=>s+((x.priceCurrency==='USD'||!x.priceCurrency)?Number(x.price||0)*Number(x.quantity||0):0),0);$('#collectionValue').textContent=money(total);$('#totalCards').textContent=count.toLocaleString();$('#uniqueCards').textContent=items.length.toLocaleString();$('#duplicates').textContent=Math.max(0,count-items.length).toLocaleString();$('#setCount').textContent=new Set(items.map(x=>x.game+':'+x.setId).filter(Boolean)).size.toLocaleString();const r=[...items].sort((a,b)=>new Date(b.addedAt)-new Date(a.addedAt)).slice(0,5),b=$('#recent');b.innerHTML='';if(!r.length){b.className='panel empty';b.textContent='No cards yet.';}else{b.className='panel';r.forEach(x=>b.appendChild(rowFor(x,true)));}}
-
-
+function rowFor(x,compact){
+  const e=document.createElement('div');e.className='cardrow';const total=(Number(x.price)||0)*(Number(x.quantity)||0);
+  const grade=x.cardState==='graded'&&x.gradingCompany?(' • '+x.gradingCompany+' '+(x.grade||'')):'';
+  e.innerHTML='<img loading="lazy" src="'+esc(imageUrl(x.image))+'"><div class="cardmain"><div class="cardtitle">'+esc(x.name)+'</div><div class="cardmeta">'+esc(x.setName)+' • #'+esc(x.localId)+' • '+esc(x.variant)+' • '+esc(x.condition)+esc(grade)+'</div>'+(compact?'':'<div class="qty"><button data-a="dec">−</button><span>'+x.quantity+'</span><button data-a="inc">+</button><button data-a="del">×</button></div>')+'</div><div class="cardprice">'+money(total,x.priceCurrency||'USD')+'<div class="cardmeta">×'+x.quantity+'</div></div>';
+  if(!compact){e.querySelector('[data-a="inc"]').onclick=()=>adjust(x,1);e.querySelector('[data-a="dec"]').onclick=()=>adjust(x,-1);e.querySelector('[data-a="del"]').onclick=()=>removeEntry(x);}
+  return e;
+}
+async function adjust(x,d){
+  const q=x.quantity+d;if(q<=0)return removeEntry(x);
+  const now=new Date().toISOString(),base=x.updatedAt;
+  if(offlineMode||!navigator.onLine){
+    x.quantity=q;x.updatedAt=now;
+    queueOfflineMutation('quantity_update',{id:x.id,quantity:q,updated_at:now},base);
+    renderLibrary();renderDashboard();return;
+  }
+  const {error}=await sb.from('collection_items').update({quantity:q,updated_at:now}).eq('id',x.id);
+  if(error)return toast('Could not update quantity');
+  await loadCollection();saveOfflineSnapshot();renderLibrary();renderDashboard();
+}
+async function removeEntry(x){
+  if(!confirm('Remove '+x.name+' from this collection?'))return;
+  if(offlineMode||!navigator.onLine){
+    const base=x.updatedAt;items=items.filter(i=>i.id!==x.id);
+    folderMembership.forEach(set=>set.delete(x.id));
+    queueOfflineMutation('collection_delete',{id:x.id},base);
+    renderLibrary();renderDashboard();return;
+  }
+  const {error}=await sb.from('collection_items').delete().eq('id',x.id);
+  if(error)return toast('Could not remove card');
+  await loadCollection();await loadFolders();saveOfflineSnapshot();renderLibrary();renderDashboard();
+}
+async function renderDashboardExtras(){
+  if(!currentUser)return;
+  const folderBox=$('#analyticsFolders');
+  if(folderBox){
+    folderBox.innerHTML='';
+    const rows=[{name:'Main Library',value:collectionValue(items)},...folders.map(f=>({name:f.name,value:collectionValue(folderItems(f.id))}))].sort((a,b)=>b.value-a.value).slice(0,6);
+    rows.forEach(r=>{const e=document.createElement('div');e.className='analyticsrow';e.innerHTML='<span>'+esc(r.name)+'</span><strong>'+money(r.value)+'</strong>';folderBox.appendChild(e);});
+  }
+  if(!navigator.onLine||offlineMode)return;
+  try{
+    const [{data:watch},{data:owned}]=await Promise.all([
+      sb.from('card_watchlist').select('card_id').eq('user_id',currentUser.id),
+      sb.from('master_set_cards').select('set_id,card_id').eq('user_id',currentUser.id).eq('game','pokemon')
+    ]);
+    $('#analyticsWatchCount').textContent=String(watch?.length||0);
+    const setBox=$('#analyticsSets');if(setBox){
+      setBox.innerHTML='<div class="skeletonline"></div><div class="skeletonline short"></div>';
+      const sets=await pokemonSets();
+      const counts={};(owned||[]).forEach(r=>counts[r.set_id]=(counts[r.set_id]||0)+1);
+      const top=(sets||[]).filter(x=>counts[x.id]).map(set=>({name:set.name,owned:counts[set.id]||0,total:Number(set.cardCount?.total||0)}))
+        .sort((a,b)=>(b.total?b.owned/b.total:0)-(a.total?a.owned/a.total:0)).slice(0,6);
+      setBox.innerHTML='';
+      if(!top.length)setBox.innerHTML='<div class="empty compact">No Master Set progress yet.</div>';
+      top.forEach(r=>{const pct=r.total?Math.min(100,r.owned/r.total*100):0;const e=document.createElement('div');e.className='analyticsprogress';e.innerHTML='<div><span>'+esc(r.name)+'</span><strong>'+r.owned+' / '+r.total+'</strong></div><i><b style="width:'+pct+'%"></b></i>';setBox.appendChild(e);});
+    }
+  }catch(e){console.warn('Dashboard extras',e);}
+}
+function renderDashboard(){
+  const count=items.reduce((sum,x)=>sum+Number(x.quantity||0),0);
+  const total=items.reduce((sum,x)=>sum+((x.priceCurrency==='USD'||!x.priceCurrency)?Number(x.price||0)*Number(x.quantity||0):0),0);
+  const spent=items.reduce((sum,x)=>sum+(x.pricePaid==null?0:Number(x.pricePaid)*Number(x.quantity||0)),0);
+  const gain=total-spent,pct=spent?gain/spent*100:0;
+  const top=[...items].sort((a,b)=>Number(b.price||0)*b.quantity-Number(a.price||0)*a.quantity)[0];
+  $('#collectionValue').textContent=money(total);$('#totalCards').textContent=count.toLocaleString();$('#uniqueCards').textContent=items.length.toLocaleString();
+  $('#duplicates').textContent=Math.max(0,count-items.length).toLocaleString();
+  $('#setCount').textContent=new Set(items.map(x=>x.game+':'+x.setId).filter(Boolean)).size.toLocaleString();
+  $('#analyticsSpend').textContent=money(spent);$('#analyticsGain').textContent=(gain>=0?'+':'')+money(gain);$('#analyticsGainPct').textContent=(pct>=0?'+':'')+pct.toFixed(1)+'%';
+  $('#analyticsGain').classList.toggle('negative',gain<0);
+  $('#analyticsTopCard').textContent=top?.name||'—';$('#analyticsTopCardValue').textContent=top?money(Number(top.price||0)*top.quantity,top.priceCurrency||'USD'):'$0.00';
+  const r=[...items].sort((a,b)=>new Date(b.addedAt)-new Date(a.addedAt)).slice(0,5),b=$('#recent');b.innerHTML='';
+  if(!r.length){b.className='panel empty';b.textContent='No cards yet.';}else{b.className='panel';r.forEach(x=>b.appendChild(rowFor(x,true)));}
+  renderDashboardExtras();
+}
 
 const HISTORY_RANGES={
   '1d':1,'7d':7,'14d':14,'21d':21,'1m':30,'3m':90,'6m':180,'1y':365,'5y':1825,'max':null
