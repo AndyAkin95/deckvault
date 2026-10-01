@@ -1200,6 +1200,11 @@ document.addEventListener('DOMContentLoaded',()=>{
   $('#privateMessageSearchBtn').onclick=findPrivateMessageRecipients;
   $('#privateMessageSearch').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();findPrivateMessageRecipients();}};
   $('#settingsSectionSelect').onchange=e=>switchSettingsSection(e.target.value);
+  $('#notificationBtn').onclick=()=>{loadNotifications();$('#notificationsDialog').showModal();};
+  $('#markAllNotificationsRead').onclick=markAllNotificationsRead;
+  $('#submitReportBtn').onclick=submitReport;
+  $('#refreshBlocksBtn').onclick=loadBlockedUsersSettings;
+  $('#refreshReports').onclick=loadReports;
   $('#newForumThreadBtn').onclick=()=>{$('#newForumThreadDialog').showModal();};
   $('#createForumThreadBtn').onclick=createForumThread;
   $('#backToForumsBtn').onclick=()=>{$('#forumThreadView').classList.add('hidden');$('#forumListView').classList.remove('hidden');loadForumThreads();};
@@ -1222,7 +1227,18 @@ document.addEventListener('DOMContentLoaded',()=>{
   $('#confirmAdminActionBtn').onclick=executeAdminAction;
   document.querySelectorAll('[data-go="community"]').forEach(b=>b.addEventListener('click',openCommunity));
   document.querySelectorAll('[data-go="marketplace"]').forEach(b=>b.addEventListener('click',loadMarketplaceFeed));
-  document.querySelectorAll('[data-go="settings"]').forEach(b=>b.addEventListener('click',()=>{switchSettingsSection($('#settingsSectionSelect').value||'account');loadProfileSettings();loadMyLists();loadTradeList();if(isAdmin&&$('#settingsSectionSelect').value==='admin')Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit()]);}));
-  // Authentication lifecycle is owned by app.js. Community realtime starts on demand.
+  document.querySelectorAll('[data-go="settings"]').forEach(b=>b.addEventListener('click',()=>{switchSettingsSection($('#settingsSectionSelect').value||'account');loadProfileSettings();loadMyLists();loadTradeList();loadBlockedUsersSettings();if(isAdmin&&$('#settingsSectionSelect').value==='admin')Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit(),loadReports()]);}));
+  if(window.installSwipeBack){
+    installSwipeBack($('#privateConversationView'),()=>{
+      activePrivateConversationId=null;activePrivateOtherUserId=null;pendingPrivateReference=null;
+      $('#privateConversationView').classList.add('hidden');$('#privateConversationEmpty').classList.remove('hidden');
+    });
+    installSwipeBack($('#forumThreadView'),()=>{
+      $('#forumThreadView').classList.add('hidden');$('#forumListView').classList.remove('hidden');loadForumThreads();
+    });
+  }
+    // Authentication lifecycle is owned by app.js. Community realtime starts on demand.
 });
 window.refreshSocialState=refreshSocialState;
+window.installSwipeBack=window.installSwipeBack||((el,cb)=>{});
+window.loadDeckVaultNotifications=loadNotifications;
