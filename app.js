@@ -41,7 +41,7 @@ const ERROR_BACKLOG_KEY='deckvault-error-backlog-v1';
 const LAST_USER_KEY='deckvault-last-user-id';
 let errorLogSyncing=false,errorLogInternal=false,errorBreadcrumbs=[];
 let activeScanWorker=null,activeScanRunning=false,activeScanBusy=false,activeScanTimer=null,activeScanMatch=null,activeScanRejected=null,pokemonSetCache=null;
-let folders=[], folderMembership=new Map(), activeFolderId=null, folderAssignItemId=null;
+let folders=[], folderMembership=new Map(), copyFolderCounts=new Map(), activeFolderId=null, folderAssignItemId=null;
 const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const money=(n,c='USD')=>n==null||Number.isNaN(Number(n))?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:c}).format(Number(n));
@@ -263,7 +263,7 @@ function saveOfflineSnapshot(){
     const syncedAt=offlineMode?(prior?.syncedAt||offlineSnapshotAt):new Date().toISOString();
     const snapshot={
       version:OFFLINE_CACHE_VERSION,userId:currentUser.id,email:currentUser.email||'',
-      savedAt:new Date().toISOString(),syncedAt,items,folders,folderMembership:serializeFolderMembership()
+      savedAt:new Date().toISOString(),syncedAt,items,folders,folderMembership:serializeFolderMembership(),copyFolderCounts:[...copyFolderCounts.entries()].map(([folderId,map])=>[folderId,[...map.entries()]])
     };
     localStorage.setItem(offlineCacheKey(currentUser.id),JSON.stringify(snapshot));
     offlineSnapshotAt=syncedAt;updateLastSyncChip(syncedAt);
@@ -282,6 +282,7 @@ function restoreOfflineSnapshot(snapshot){
   items=Array.isArray(snapshot?.items)?snapshot.items:[];
   folders=Array.isArray(snapshot?.folders)?snapshot.folders:[];
   folderMembership=new Map((snapshot?.folderMembership||[]).map(([id,ids])=>[id,new Set(ids||[])]));
+  copyFolderCounts=new Map((snapshot?.copyFolderCounts||[]).map(([folderId,entries])=>[folderId,new Map(entries||[])]));
   offlineSnapshotAt=snapshot?.syncedAt||snapshot?.savedAt||null;updateLastSyncChip(offlineSnapshotAt);
   if(activeFolderId&&!folders.some(f=>f.id===activeFolderId))activeFolderId=null;
   renderFolderChips();
@@ -590,28 +591,36 @@ async function loadCollection(){
   return true;
 }
 async function loadFolders(){
-  if(!currentUser){folders=[];folderMembership=new Map();return;}
-  const [fRes,mRes]=await Promise.all([
+  if(!currentUser){folders=[];folderMembership=new Map();copyFolderCounts=new Map();return true;}
+  const [fRes,mRes,cRes]=await Promise.all([
     sb.from('collection_folders').select('*').eq('user_id',currentUser.id).order('name'),
-    sb.from('collection_folder_items').select('folder_id,collection_item_id')
+    sb.from('collection_folder_items').select('folder_id,collection_item_id'),
+    sb.from('collection_copies').select('folder_id,collection_item_id').eq('user_id',currentUser.id).not('folder_id','is',null)
   ]);
-  if(fRes.error||mRes.error){console.error(fRes.error||mRes.error);return false;}
+  if(fRes.error||mRes.error||cRes.error){console.error(fRes.error||mRes.error||cRes.error);return false;}
   folders=fRes.data||[];
-  folderMembership=new Map();
+  folderMembership=new Map();copyFolderCounts=new Map();
   (mRes.data||[]).forEach(row=>{
     if(!folderMembership.has(row.folder_id))folderMembership.set(row.folder_id,new Set());
     folderMembership.get(row.folder_id).add(row.collection_item_id);
   });
+  (cRes.data||[]).forEach(row=>{
+    if(!copyFolderCounts.has(row.folder_id))copyFolderCounts.set(row.folder_id,new Map());
+    const map=copyFolderCounts.get(row.folder_id);
+    map.set(row.collection_item_id,(map.get(row.collection_item_id)||0)+1);
+  });
   if(activeFolderId&&!folders.some(f=>f.id===activeFolderId))activeFolderId=null;
-  renderFolderChips();
-  populateManualFolderSelect();
-  return true;
+  renderFolderChips();populateManualFolderSelect();return true;
 }
 
 function folderItems(folderId){
   if(!folderId)return [...items];
-  const ids=folderMembership.get(folderId)||new Set();
-  return items.filter(x=>ids.has(x.id));
+  const ids=folderMembership.get(folderId)||new Set(),copyCounts=copyFolderCounts.get(folderId)||new Map();
+  return items.flatMap(x=>{
+    if(ids.has(x.id))return [x];
+    const copies=copyCounts.get(x.id)||0;
+    return copies?[{...x,quantity:copies}]:[];
+  });
 }
 function collectionValue(rows){
   return rows.reduce((sum,x)=>sum+((x.priceCurrency==='USD'||!x.priceCurrency)?Number(x.price||0)*Number(x.quantity||0):0),0);
@@ -1165,7 +1174,7 @@ async function saveCopyRow(id,node){
     updated_at:new Date().toISOString()
   };
   const {error}=await sb.from('collection_copies').update(payload).eq('id',id);
-  if(error)return toast('Could not save copy');haptic();toast('Copy saved');
+  if(error)return toast('Could not save copy');await loadFolders();renderLibrary();renderDashboard();haptic();toast('Copy saved');
 }
 async function addCopyRow(){
   if(!currentCopyItem)return;
@@ -1178,7 +1187,7 @@ async function addCopyRow(){
   if(error)return toast('Could not add copy');
   const quantity=x.quantity+1,now=new Date().toISOString();
   await sb.from('collection_items').update({quantity,updated_at:now}).eq('id',x.id);
-  x.quantity=quantity;x.updatedAt=now;await reloadCopies();renderLibrary();renderDashboard();
+  x.quantity=quantity;x.updatedAt=now;await loadFolders();await reloadCopies();renderLibrary();renderDashboard();
 }
 async function deleteCopyRow(id){
   if(!currentCopyItem||!confirm('Remove this individual copy?'))return;
@@ -1186,7 +1195,7 @@ async function deleteCopyRow(id){
   const quantity=Math.max(0,currentCopyItem.quantity-1);
   if(quantity===0){await sb.from('collection_items').delete().eq('id',currentCopyItem.id);$('#copiesDialog').close();await loadCollection();renderLibrary();renderDashboard();return;}
   await sb.from('collection_items').update({quantity,updated_at:new Date().toISOString()}).eq('id',currentCopyItem.id);
-  currentCopyItem.quantity=quantity;await reloadCopies();renderLibrary();renderDashboard();
+  currentCopyItem.quantity=quantity;await loadFolders();await reloadCopies();renderLibrary();renderDashboard();
 }
 
 async function openLibraryCardDetails(x){
