@@ -10,7 +10,7 @@
   <title>DeckVault</title>
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=15">
+  <link rel="stylesheet" href="styles.css?v=16">
 </head>
 <body>
 <section id="authGate" class="authgate">
@@ -152,20 +152,35 @@
   </section>
 
   <section id="scanner" class="view">
-    <div class="pagehead"><div><div class="eyebrow">RAPID SCAN</div><h1>Phone camera</h1></div><span id="cameraStatus" class="pill">Camera off</span></div>
-    <div class="scanner">
+    <div class="pagehead"><div><div class="eyebrow">ACTIVE SCAN</div><h1>Phone camera</h1></div><span id="cameraStatus" class="pill">Camera off</span></div>
+    <div class="scanner activescanner">
       <video id="video" autoplay playsinline muted></video>
       <img id="capturePreview" class="hidden" alt="Captured card">
       <canvas id="canvas" class="hidden"></canvas>
       <div id="cameraPlaceholder" class="placeholder"><div class="frame"></div><p>Position one card inside the frame.</p></div>
+      <div id="activeScanGuide" class="activeguide hidden"><span>Keep the bottom card number inside this band</span></div>
     </div>
-    <div class="scanbuttons">
-      <button id="startCamera" class="primary">Start camera</button>
-      <button id="captureCard" class="secondary" disabled>Capture</button>
+    <div class="scanbuttons activebuttons">
+      <button id="activeScanBtn" class="primary">Start Active Scan (Beta)</button>
+      <button id="startCamera" class="secondary">Camera only</button>
+      <button id="captureCard" class="secondary" disabled>Manual capture</button>
       <button id="retake" class="secondary hidden">Retake</button>
     </div>
-    <div class="notice"><strong>Current scanner:</strong> camera capture works. Automatic recognition is the next milestone.</div>
-    <button class="wide secondary" data-go="lookup">Identify captured card with lookup</button>
+    <div id="activeScanStatus" class="status">Active Scan prioritizes the collector/set number printed along the bottom of the card.</div>
+    <div id="activeScanCandidate" class="scanmatch hidden">
+      <img id="activeScanCandidateImage" alt="">
+      <div class="scanmatchinfo">
+        <div class="eyebrow">POSSIBLE MATCH</div>
+        <h2 id="activeScanCandidateName"></h2>
+        <div id="activeScanCandidateMeta" class="muted"></div>
+        <div class="scanmatchactions">
+          <button id="activeScanReject" class="dangerbtn" type="button">✕ Wrong</button>
+          <button id="activeScanConfirm" class="primary" type="button">✓ Correct</button>
+        </div>
+      </div>
+    </div>
+    <div class="notice"><strong>Active Scan Beta:</strong> glare, sleeves, older layouts and unusual promo numbering can reduce OCR accuracy. Manual capture and lookup remain available as fallback.</div>
+    <button class="wide secondary" data-go="lookup">Use manual lookup</button>
   </section>
 
   <section id="library" class="view">
@@ -312,6 +327,7 @@
       <label>Display name<input id="profileDisplayName" maxlength="60"></label>
       <label>Bio<textarea id="profileBio" maxlength="300"></textarea></label>
       <label>Avatar image URL<input id="profileAvatarUrl" type="url" placeholder="https://…"></label>
+      <label>Master Set checklist visibility<select id="masterSetsVisibility"><option value="public">Public on profile</option><option value="private">Private</option></select></label>
       <button id="saveProfileBtn" class="primary" type="button">Save profile</button>
     </div>
     <div class="panel">
@@ -513,7 +529,8 @@
 
 <div id="toast" class="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js"></script>
-<script src="app.js?v=15" defer></script>
-<script src="social.js?v=15" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js"></script>
+<script src="app.js?v=16" defer></script>
+<script src="social.js?v=16" defer></script>
 </body>
 </html>
