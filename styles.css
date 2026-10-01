@@ -41,3 +41,17 @@ textarea{font:inherit;resize:vertical;min-height:86px}
 #tradeListStatus.active{color:#bbf7d0;border-color:#166534;background:#10261b}
 @media(max-width:760px){.tradeaddgrid{grid-template-columns:1fr 1fr}.tradeaddgrid label:first-child,.tradeaddgrid label:nth-child(4),.tradeaddgrid button{grid-column:1/-1}}
 @media(max-width:420px){.bottomnav small{font-size:.57rem}.bottomnav button{font-size:1rem;padding:4px 2px}.tradeentry{grid-template-columns:45px 1fr}.tradeentry img{width:45px;height:63px}.tradeentry>.dangerbtn{grid-column:1/-1}}
+
+.legalcard{width:min(820px,96vw);max-height:94vh;display:flex;flex-direction:column}
+.legaltext{white-space:pre-wrap;overflow:auto;max-height:58vh;background:#0b1220;border:1px solid var(--line);border-radius:14px;padding:16px;line-height:1.55;font-size:.84rem;color:#d8e0eb}
+.dialoglegal{max-height:60vh;margin:14px 0}
+.termscheck{display:flex;align-items:flex-start;gap:10px;margin-top:14px;font-size:.86rem;font-weight:700}.termscheck input{margin-top:3px;width:18px;height:18px}
+.adminsecurity{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--line);background:#0e1727;border-radius:14px;padding:12px}.adminsecurity strong,.adminsecurity span{display:block}.adminsecurity span{font-size:.76rem;margin-top:3px}
+.adminsection{margin-top:24px}.useridentity{display:flex;align-items:center;gap:10px}.useridentity .avatarfallback,.useridentity img{width:42px;height:42px;border-radius:50%;object-fit:cover}
+.banlabel{color:#fca5a5!important;font-weight:800}.auditrow{display:grid;grid-template-columns:1fr auto;gap:4px;border:1px solid var(--line);background:#0e1727;border-radius:12px;padding:10px}.auditrow strong{text-transform:capitalize}.auditrow span{color:var(--accent);font-size:.8rem}.auditrow small{grid-column:1/-1;color:var(--muted)}
+.mfaqr{display:grid;place-items:center;background:#fff;border-radius:16px;padding:14px;margin:12px auto;max-width:280px}.mfaqr img{width:100%;height:auto;display:block}
+.secretbox{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;background:#0b1220;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:.76rem;margin-bottom:12px}
+.codefield{display:grid;gap:7px;font-size:.82rem;font-weight:800}.codefield input{font-size:1.3rem;letter-spacing:.25em;text-align:center;background:#0b1220;color:#fff;border:1px solid #475569;border-radius:12px;padding:12px}
+#adminActionReasonWrap,#adminActionNotesWrap{display:grid;gap:7px;font-size:.82rem;font-weight:700;margin:12px 0}#adminActionReasonWrap textarea,#adminActionNotesWrap textarea{background:#0b1220;color:#fff;border:1px solid #334155;border-radius:12px;padding:10px}
+#bannedGate .danger{margin:14px 0}
+@media(max-width:560px){.adminsecurity{align-items:stretch;flex-direction:column}.legalcard{padding:16px}.legaltext{max-height:55vh}}
