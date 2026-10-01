@@ -30,6 +30,7 @@ jobs:
           node --check app.js
           node --check social.js
           node --check sw.js
+          node tests/scanner-match.mjs
       - name: Install browser test dependency
         run: |
           npm install --no-save playwright@1.55.0
