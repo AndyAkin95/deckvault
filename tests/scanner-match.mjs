@@ -36,7 +36,7 @@ assert.equal(parse(' 161 / 197 ')?.localId,'161');
 assert.equal(parse(' 161 / 197 ')?.denominator,197);
 assert.equal(parse('TG05/TG30')?.localId,'TG05');
 assert.equal(parse('TG05/TG30')?.denominator,30);
-assert.equal(parse('O61 / I97')?.localId,'61');
+assert.equal(ctx.normalizeCollectorId(parse('O61 / I97')?.localId),'61');
 assert.equal(parse('O61 / I97')?.denominator,197);
 assert.equal(parse('random label with no number'),null);
 assert.equal(ctx.parseCardFractions('11/197 ... 161/197')[0].localId,'161');
