@@ -86,7 +86,21 @@ const MOCK_SUPABASE = String.raw`
     name:'Pikachu',local_id:'125',set_id:'sv3',set_name:'Obsidian Flames',rarity:'Common',
     variant:'Normal',condition:'Near Mint',language:'English',quantity:2,image_url:'',
     price:1.25,price_paid:0.50,price_currency:'USD',price_source:'TCGplayer Market',
-    price_updated_at:now,entry_source:'provider',notes:'',added_at:now,updated_at:now
+    price_updated_at:now,entry_source:'provider',card_state:'raw',grading_company:null,grade:null,cert_number:null,purchase_date:'2026-09-15',notes:'',added_at:now,updated_at:now
+  };
+  const watch={
+    user_id:user.id,game:'pokemon',card_id:'sv3-125',variant:'Normal',card_name:'Pikachu',
+    set_name:'Obsidian Flames',image_url:'',target_price:1.00,currency:'USD',
+    notify_change_pct:10,last_seen_value:1.25,last_notified_value:null,last_notified_at:null,created_at:now
+  };
+  const copies=[
+    {id:'88888888-8888-4888-8888-888888888881',user_id:user.id,collection_item_id:card.id,condition:'Near Mint',price_paid:.5,purchase_date:'2026-09-15',card_state:'raw',grading_company:null,grade:null,cert_number:null,notes:null,folder_id:'33333333-3333-4333-8333-333333333333',created_at:now,updated_at:now},
+    {id:'88888888-8888-4888-8888-888888888882',user_id:user.id,collection_item_id:card.id,condition:'Lightly Played',price_paid:.4,purchase_date:'2026-09-20',card_state:'raw',grading_company:null,grade:null,cert_number:null,notes:null,folder_id:null,created_at:now,updated_at:now}
+  ];
+  const notification={
+    id:'99999999-9999-4999-8999-999999999999',user_id:user.id,type:'price_change',
+    title:'Watchlist price change',body:'Pikachu moved 12% to USD 1.25',
+    actor_user_id:null,reference_type:'card',reference_id:'sv3-125',read_at:null,created_at:now
   };
   const folder={id:'33333333-3333-4333-8333-333333333333',user_id:user.id,name:'Favorites',created_at:now,updated_at:now};
   const tradeList={id:'44444444-4444-4444-8444-444444444444',user_id:user.id,name:'Trade / Sell',visibility:'public',system_key:'trade',collection_list_items:[]};
@@ -103,6 +117,10 @@ const MOCK_SUPABASE = String.raw`
     if(table==='private_conversations') return terminal==='single'||terminal==='maybeSingle'?{data:privateConversation,error:null}:{data:[privateConversation],error:null};
     if(table==='private_messages') return terminal==='single'||terminal==='maybeSingle'?{data:privateMessage,error:null}:{data:[privateMessage],error:null};
     if(table==='private_conversation_reads') return {data:[],error:null};
+    if(table==='notifications') return terminal==='single'||terminal==='maybeSingle'?{data:notification,error:null}:{data:[notification],error:null};
+    if(table==='card_watchlist') return terminal==='single'||terminal==='maybeSingle'?{data:watch,error:null}:{data:[watch],error:null};
+    if(table==='collection_copies') return terminal==='single'||terminal==='maybeSingle'?{data:copies[0],error:null}:{data:copies,error:null};
+    if(table==='user_blocks'||table==='user_reports') return {data:[],error:null};
     if(table==='profile_details') return {data:[],error:null};
     if(table==='admin_users') return terminal==='single'||terminal==='maybeSingle'?{data:null,error:null}:{data:[],error:null};
     if(table==='collection_lists') return terminal==='single'||terminal==='maybeSingle'?{data:tradeList,error:null}:{data:[tradeList],error:null};
@@ -150,7 +168,20 @@ const MOCK_SUPABASE = String.raw`
       }
     },
     from:(table)=>builder(table),
-    rpc:async()=>({data:[],error:null}),
+    rpc:async(name,args)=>{
+      if(name==='list_marketplace_cards')return {data:[{
+        game:'pokemon',card_id:'sv3-125',card_name:'Pikachu',set_name:'Obsidian Flames',local_id:'125',image_url:'',
+        seller_count:1,listing_count:1,total_offer_quantity:1,lowest_asking_price:2.50,price_currency:'USD',
+        has_trade:true,has_sell:true,newest_listing:now
+      }],error:null};
+      if(name==='search_trade_offers')return {data:[{
+        user_id:otherProfile.id,username:otherProfile.username,display_name:otherProfile.display_name,avatar_url:null,
+        marketplace_mode:'both',marketplace_note:'VM marketplace note',collection_item_id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        card_name:'Pikachu',set_name:'Obsidian Flames',local_id:'125',variant:'Normal',condition:'Near Mint',language:'English',
+        offer_quantity:1,asking_price:2.50,price_currency:'USD',image_url:'',offer_note:'VM offer'
+      }],error:null};
+      return {data:[],error:null};
+    },
     functions:{invoke:async()=>({data:{ok:true},error:null})},
     channel:()=>({on(){return this;},subscribe(){return this;},unsubscribe(){return this;}})
   };
@@ -297,7 +328,22 @@ async function signedInPass(browser, pass) {
   assert(shellState.navDisplay!=='none'&&shellState.navVisibility!=='hidden'&&shellState.navRect.height>0,
     'Bottom nav is not visible after signed-in initialization: '+JSON.stringify(shellState));
 
-  const views=['dashboard','lookup','library','scanner','marketplace','community','settings'];
+  // v25 header modules.
+  assert((await page.locator('#analyticsSpend').count())===1,'Analytics widgets missing');
+  assert((await page.locator('#notificationBadge').innerText())==='1','Unread notification badge did not populate');
+  await page.click('#notificationBtn');
+  await page.waitForSelector('#notificationsDialog[open]');
+  assert((await page.locator('#notificationsList').innerText()).includes('Watchlist price change'),'Notification center did not render seeded notification');
+  await page.locator('#notificationsDialog .close').click();
+
+  await page.click('#universalSearchBtn');
+  await page.waitForSelector('#universalSearchDialog[open]');
+  await page.fill('#universalSearchInput','Pika');
+  await page.waitForTimeout(300);
+  assert((await page.locator('#universalSearchResults').innerText()).includes('Pikachu'),'Universal search did not find library card');
+  await page.locator('#universalSearchDialog .close').click();
+
+    const views=['dashboard','lookup','library','scanner','marketplace','community','settings'];
   for(const view of views){
     const button=page.locator('.bottomnav [data-go="'+view+'"]');
     await button.click();
@@ -324,7 +370,18 @@ async function signedInPass(browser, pass) {
     }
   }
 
-  // Library controls and card details.
+  // Marketplace listing -> private message with card context.
+  await page.click('.bottomnav [data-go="marketplace"]');
+  await page.waitForTimeout(200);
+  const marketCard=page.locator('.marketcard').first();
+  assert(await marketCard.count()===1,'Marketplace feed did not render');
+  await marketCard.click();await page.waitForTimeout(150);
+  const messageSeller=page.locator('#marketOffers [data-message]').first();
+  assert(await messageSeller.count()===1,'Message seller action missing');
+  await messageSeller.click();await page.waitForSelector('#privateConversationView:not(.hidden)');
+  assert((await page.locator('#privateMessageInput').getAttribute('placeholder')).includes('Pikachu'),'Marketplace card context did not reach DM composer');
+
+    // Library controls and card details.
   await page.click('.bottomnav [data-go="library"]');
   await page.selectOption('#librarySort','name_asc');
   await page.fill('#librarySearch','Pika');
@@ -333,7 +390,12 @@ async function signedInPass(browser, pass) {
   assert(await cardImage.count()===1,'Mock library card did not render');
   await cardImage.click();
   await page.waitForSelector('#libraryCardDialog[open]');
-  await page.waitForTimeout(250);
+  await page.waitForTimeout(300);
+  assert((await page.locator('#watchCardBtn').innerText()).includes('Watching'),'Seeded watchlist state did not load');
+  await page.click('#manageCopiesBtn');
+  await page.waitForSelector('#copiesDialog[open]');
+  assert(await page.locator('.copyrow').count()===2,'Individual copy rows did not render');
+  await page.locator('#copiesDialog .close').click();
   await page.locator('#libraryCardDialog .close').click();
 
   await page.click('#manualAddCardBtn');
@@ -343,7 +405,22 @@ async function signedInPass(browser, pass) {
   await page.waitForSelector('#manageFoldersDialog[open]');
   await page.locator('#manageFoldersDialog .close').click();
 
-  // Settings dropdown should show one focused pane at a time; admin must not appear for a non-admin.
+  // Collector profile safety/report flow.
+  await page.click('.bottomnav [data-go="community"]');
+  await page.click('[data-community-tab="profiles"]');
+  await page.fill('#communitySearch','other');
+  await page.click('#communitySearchBtn');await page.waitForTimeout(120);
+  const otherCard=page.locator('.profilecard').filter({hasText:'@othercollector'}).first();
+  assert(await otherCard.count()===1,'Other collector profile was not searchable');
+  await otherCard.click();await page.waitForTimeout(120);
+  await page.click('#publicProfileView [data-report-user]');
+  await page.waitForSelector('#reportDialog[open]');
+  await page.fill('#reportReason','Automated VM report test');
+  await page.click('#submitReportBtn');
+  await page.waitForTimeout(100);
+  assert(!(await page.locator('#reportDialog').getAttribute('open')),'Report dialog did not close after submission');
+
+    // Settings dropdown should show one focused pane at a time; admin must not appear for a non-admin.
   await page.click('.bottomnav [data-go="settings"]');
   assert(await page.locator('#settingsSectionSelect option[value="admin"]').count()===0,'Administrator settings appeared for non-admin');
   for(const section of ['profile','marketplace','lists','valuation','backup','diagnostics','data','account']){
@@ -351,6 +428,10 @@ async function signedInPass(browser, pass) {
     await page.waitForTimeout(80);
     assert(await page.locator('[data-settings-pane="'+section+'"]').evaluate(el=>el.classList.contains('active')),'Settings pane did not activate: '+section);
   }
+  await page.selectOption('#settingsSectionSelect','profile');
+  await page.click('#refreshBlocksBtn');
+  await page.selectOption('#settingsSectionSelect','backup');
+  assert(await page.locator('#importCollectionFormat option[value="pricecharting"]').count()===1,'PriceCharting import option missing');
   await page.selectOption('#settingsSectionSelect','diagnostics');
   await page.click('#refreshErrorLog');
   await page.waitForTimeout(150);
@@ -363,6 +444,14 @@ async function signedInPass(browser, pass) {
   assert(await page.locator('.bottomnav [data-go="library"]').isEnabled(),'Library should remain enabled offline');
   await page.click('.bottomnav [data-go="library"]');
   assert(await page.locator('.librarycard').count()===1,'Saved library disappeared offline');
+  await page.click('#manualAddCardBtn');
+  await page.waitForSelector('#manualCardDialog[open]');
+  await page.fill('#manualName','Offline Test Card');
+  await page.fill('#manualSetName','Offline Set');
+  await page.click('#saveManualCardBtn');
+  await page.waitForTimeout(120);
+  assert(await page.locator('.librarycard').count()===2,'Offline manual add did not update library');
+  assert((await page.locator('#offlineQueueStatus').innerText()).includes('queued'),'Offline mutation queue did not record change');
   await context.setOffline(false);
   await page.waitForTimeout(400);
 
