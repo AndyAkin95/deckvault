@@ -31,6 +31,10 @@ const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{
 let currentUser=null, currentCard=null, stream=null, installPrompt=null, items=[];
 let offlineMode=false,offlineSnapshotAt=null;
 const OFFLINE_CACHE_VERSION=1;
+const APP_BUILD='v21';
+const ERROR_BACKLOG_KEY='deckvault-error-backlog-v1';
+const LAST_USER_KEY='deckvault-last-user-id';
+let errorLogSyncing=false,errorLogInternal=false,errorBreadcrumbs=[];
 let activeScanWorker=null,activeScanRunning=false,activeScanBusy=false,activeScanTimer=null,activeScanMatch=null,activeScanRejected=null,pokemonSetCache=null;
 let folders=[], folderMembership=new Map(), activeFolderId=null, folderAssignItemId=null;
 const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
@@ -42,6 +46,190 @@ const imageUrl=(base,q='low')=>{
   return base+'/'+q+'.webp';
 };
 function toast(m){const e=$('#toast');e.textContent=m;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),1800);}
+function redactDiagnostic(value){
+  let s=String(value??'');
+  s=s.replace(/Bearer\s+[A-Za-z0-9._~-]+/gi,'Bearer [REDACTED]');
+  s=s.replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,'[REDACTED_JWT]');
+  s=s.replace(/((?:access|refresh)[_-]?token|apikey|api[_-]?key|password|passwd|secret)(["'=:\s]+)([^\s,;}]+)/gi,'$1$2[REDACTED]');
+  s=s.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,'[REDACTED_EMAIL]');
+  return s.slice(0,12000);
+}
+function diagnosticId(){
+  if(globalThis.crypto?.randomUUID)return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{
+    const r=Math.random()*16|0,v=c==='x'?r:(r&3|8);return v.toString(16);
+  });
+}
+function readErrorBacklog(){
+  try{
+    const rows=JSON.parse(localStorage.getItem(ERROR_BACKLOG_KEY)||'[]');
+    return Array.isArray(rows)?rows:[];
+  }catch{return [];}
+}
+function writeErrorBacklog(rows){
+  try{localStorage.setItem(ERROR_BACKLOG_KEY,JSON.stringify((rows||[]).slice(-120)));}catch{}
+}
+function currentAppView(){return document.querySelector('.view.active')?.id||'startup';}
+function addBreadcrumb(label){
+  const text=redactDiagnostic(label).slice(0,160);
+  if(!text)return;
+  errorBreadcrumbs.push({at:new Date().toISOString(),action:text});
+  if(errorBreadcrumbs.length>12)errorBreadcrumbs=errorBreadcrumbs.slice(-12);
+}
+function describeTarget(el){
+  if(!el)return '';
+  const target=el.closest?.('button,a,[data-go],summary,input,select,textarea')||el;
+  const tag=String(target.tagName||'').toLowerCase();
+  const id=target.id?'#'+target.id:'';
+  const go=target.dataset?.go?' go:'+target.dataset.go:'';
+  const type=target.getAttribute?.('type')?' type:'+target.getAttribute('type'):'';
+  const safeText=['button','a','summary'].includes(tag)?String(target.textContent||'').trim().replace(/\s+/g,' ').slice(0,70):'';
+  return [tag+id,go,type,safeText].filter(Boolean).join(' ');
+}
+function captureAppError(error,{severity='error',source='runtime',context={}}={}){
+  try{
+    if(errorLogInternal)return;
+    const message=redactDiagnostic(error?.message||error||'Unknown error');
+    const stack=redactDiagnostic(error?.stack||'');
+    const userId=currentUser?.id||localStorage.getItem(LAST_USER_KEY)||null;
+    const now=new Date().toISOString();
+    const rows=readErrorBacklog();
+    const fingerprint=[source,message,currentAppView(),APP_BUILD].join('|').slice(0,2000);
+    const recent=rows[rows.length-1];
+    if(recent&&recent.fingerprint===fingerprint&&(Date.now()-new Date(recent.client_created_at).getTime())<5000){
+      recent.occurrence_count=Number(recent.occurrence_count||1)+1;
+      recent.client_created_at=now;
+      recent.breadcrumbs=[...errorBreadcrumbs];
+      writeErrorBacklog(rows);
+    }else{
+      rows.push({
+        client_event_id:diagnosticId(),
+        user_id:userId,
+        severity,
+        source:redactDiagnostic(source).slice(0,80),
+        message,
+        stack,
+        build_version:APP_BUILD,
+        app_view:currentAppView(),
+        online:navigator.onLine,
+        user_agent:redactDiagnostic(navigator.userAgent).slice(0,500),
+        breadcrumbs:[...errorBreadcrumbs],
+        context:{
+          offline_mode:!!offlineMode,
+          standalone:window.matchMedia?.('(display-mode: standalone)')?.matches||false,
+          ...Object.fromEntries(Object.entries(context||{}).map(([k,v])=>[k,redactDiagnostic(typeof v==='string'?v:JSON.stringify(v)).slice(0,1000)]))
+        },
+        occurrence_count:1,
+        client_created_at:now,
+        fingerprint
+      });
+      writeErrorBacklog(rows);
+    }
+    if(navigator.onLine&&currentUser)setTimeout(()=>syncErrorBacklog(),0);
+  }catch{}
+}
+async function syncErrorBacklog(){
+  if(errorLogSyncing||!navigator.onLine)return;
+  const user=currentUser;
+  if(!user)return;
+  const pending=readErrorBacklog().filter(r=>!r.user_id||r.user_id===user.id);
+  if(!pending.length)return;
+  errorLogSyncing=true;
+  errorLogInternal=true;
+  try{
+    const payload=pending.map(r=>({
+      client_event_id:r.client_event_id,
+      user_id:user.id,
+      severity:r.severity||'error',
+      source:r.source||'runtime',
+      message:redactDiagnostic(r.message),
+      stack:redactDiagnostic(r.stack||'')||null,
+      build_version:r.build_version||APP_BUILD,
+      app_view:r.app_view||null,
+      online:typeof r.online==='boolean'?r.online:null,
+      user_agent:redactDiagnostic(r.user_agent||'').slice(0,500)||null,
+      breadcrumbs:r.breadcrumbs||[],
+      context:r.context||{},
+      occurrence_count:Number(r.occurrence_count||1),
+      client_created_at:r.client_created_at||new Date().toISOString()
+    }));
+    const {error}=await sb.from('app_error_logs').upsert(payload,{onConflict:'client_event_id',ignoreDuplicates:true});
+    if(error)throw error;
+    const sent=new Set(pending.map(r=>r.client_event_id));
+    writeErrorBacklog(readErrorBacklog().filter(r=>!sent.has(r.client_event_id)));
+  }catch(e){
+    // Do not recursively log failures of the logger itself.
+    originalConsoleError('Error backlog sync failed',e);
+  }finally{
+    errorLogInternal=false;
+    errorLogSyncing=false;
+  }
+}
+async function diagnosticBundle(){
+  let server=[];
+  if(currentUser&&navigator.onLine){
+    try{
+      errorLogInternal=true;
+      const {data,error}=await sb.from('app_error_logs')
+        .select('client_event_id,severity,source,message,stack,build_version,app_view,online,user_agent,breadcrumbs,context,occurrence_count,client_created_at,received_at')
+        .eq('user_id',currentUser.id)
+        .order('client_created_at',{ascending:false})
+        .limit(100);
+      if(!error)server=data||[];
+    }finally{errorLogInternal=false;}
+  }
+  const local=readErrorBacklog().filter(r=>!currentUser||!r.user_id||r.user_id===currentUser.id);
+  return {
+    generated_at:new Date().toISOString(),
+    build:APP_BUILD,
+    current_view:currentAppView(),
+    online:navigator.onLine,
+    offline_mode:offlineMode,
+    user_agent:redactDiagnostic(navigator.userAgent),
+    local_pending:local,
+    synced_errors:server
+  };
+}
+async function loadErrorBacklog(){
+  if(!$('#errorLogList'))return;
+  if(currentUser&&navigator.onLine)await syncErrorBacklog();
+  const bundle=await diagnosticBundle();
+  const rows=[
+    ...bundle.local_pending.map(r=>({...r,_location:'Pending local'})),
+    ...bundle.synced_errors.map(r=>({...r,_location:'Synced'}))
+  ].sort((a,b)=>new Date(b.client_created_at)-new Date(a.client_created_at)).slice(0,50);
+  $('#errorLogStatus').textContent=bundle.local_pending.length+' pending locally • '+bundle.synced_errors.length+' synced error'+(bundle.synced_errors.length===1?'':'s');
+  const box=$('#errorLogList');box.innerHTML='';
+  if(!rows.length){box.innerHTML='<div class="empty">No recorded errors.</div>';return;}
+  rows.forEach(r=>{
+    const e=document.createElement('details');e.className='errorlogrow';
+    e.innerHTML='<summary><span class="errorseverity '+esc(r.severity||'error')+'">'+esc((r.severity||'error').toUpperCase())+'</span><strong>'+esc(r.message||'Unknown error')+'</strong><small>'+esc(r._location)+' • '+new Date(r.client_created_at).toLocaleString()+'</small></summary><div class="errorlogdetail"><div><b>Source</b> '+esc(r.source||'runtime')+'</div><div><b>Build</b> '+esc(r.build_version||'unknown')+' • <b>View</b> '+esc(r.app_view||'unknown')+' • <b>Online</b> '+String(r.online)+'</div>'+(Number(r.occurrence_count||1)>1?'<div><b>Occurrences</b> '+Number(r.occurrence_count)+'</div>':'')+(r.stack?'<pre>'+esc(r.stack)+'</pre>':'')+(r.breadcrumbs?.length?'<div class="errorbreadcrumbs"><b>Recent actions</b>'+r.breadcrumbs.map(x=>'<span>'+esc(new Date(x.at).toLocaleTimeString())+' — '+esc(x.action)+'</span>').join('')+'</div>':'')+'</div>';
+    box.appendChild(e);
+  });
+}
+async function copyDiagnostics(){
+  const bundle=await diagnosticBundle();
+  const text=JSON.stringify(bundle,null,2);
+  try{await navigator.clipboard.writeText(text);toast('Diagnostics copied');}
+  catch{toast('Could not copy diagnostics');}
+}
+async function exportDiagnostics(){
+  const bundle=await diagnosticBundle();
+  download('deckvault-diagnostics-'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(bundle,null,2),'application/json');
+}
+const originalConsoleError=console.error.bind(console);
+console.error=(...args)=>{
+  originalConsoleError(...args);
+  if(errorLogInternal)return;
+  try{
+    const first=args.find(x=>x instanceof Error);
+    const message=args.map(x=>x instanceof Error?x.message:(typeof x==='string'?x:JSON.stringify(x))).join(' ');
+    captureAppError(first||new Error(message),{source:'console.error'});
+  }catch{}
+};
+document.addEventListener('click',e=>{const d=describeTarget(e.target);if(d)addBreadcrumb('click '+d);},true);
+
+
 function setAuthMessage(m,bad=false){const e=$('#authMessage');e.textContent=m||'';e.classList.toggle('error',bad);}
 function showPane(id){['signinPane','signupPane','applicationPane','resetPane'].forEach(x=>{const e=$('#'+x);if(e)e.classList.toggle('hidden',x!==id);});setAuthMessage('');}
 function hideAccessGates(){
@@ -208,6 +396,7 @@ async function showApp(user,termsJustAccepted=false){
     $('#appShell').classList.remove('hidden');
     $('#accountChip').textContent=user.email||'Signed in';
     $('#accountEmail').textContent=user.email||'';
+    localStorage.setItem(LAST_USER_KEY,user.id);
     setOfflineMode(false);
     const collectionOK=await loadCollection();
     const foldersOK=await loadFolders();
@@ -216,6 +405,7 @@ async function showApp(user,termsJustAccepted=false){
     warmOfflineLibraryImages();
     renderDashboard();renderLibrary();
     if(window.refreshSocialState)setTimeout(()=>window.refreshSocialState(),50);
+    setTimeout(()=>syncErrorBacklog().catch(()=>{}),100);
     return true;
   }catch(e){
     console.warn('Online app load failed',e);
@@ -834,16 +1024,26 @@ async function exportCsv(collectr){const cols=collectr?['Game','Card Name','Set'
 async function importBackup(file){const d=JSON.parse(await file.text());if(!d||!Array.isArray(d.collection))throw new Error('Not a valid DeckVault backup.');if(!confirm('Restore '+d.collection.length+' entries to this account?'))return;for(const x of d.collection){const cardId=x.cardId||x.card_id;if(!cardId)continue;const variant=x.variant||'Normal',condition=x.condition||'Near Mint',language=x.language||'English';const old=items.find(i=>i.game===(x.game||'pokemon')&&i.cardId===cardId&&i.variant===variant&&i.condition===condition&&i.language===language);const obj={game:x.game||'pokemon',cardId,name:x.name||'',localId:x.localId||x.local_id||'',setId:x.setId||x.set_id||'',setName:x.setName||x.set_name||'',rarity:x.rarity||'',variant,condition,language,quantity:Number(x.quantity||1),image:x.image||x.image_url||'',price:x.price==null?null:Number(x.price),pricePaid:(x.pricePaid??x.price_paid)==null?null:Number(x.pricePaid??x.price_paid),priceCurrency:x.priceCurrency||x.price_currency||'USD',priceSource:x.priceSource||x.price_source||'',priceUpdatedAt:x.priceUpdatedAt||x.price_updated_at||null,entrySource:x.entrySource||x.entry_source||'provider',notes:x.notes||'',addedAt:x.addedAt||x.added_at||new Date().toISOString()};if(old)await sb.from('collection_items').update(toRow({...obj,id:old.id})).eq('id',old.id);else await sb.from('collection_items').insert({...toRow(obj),added_at:obj.addedAt});}await loadCollection();renderDashboard();renderLibrary();toast('Backup restored');}
 
 function showStartupError(error){
-  console.error('DeckVault startup error',error);
+  captureAppError(error,{severity:'fatal',source:'startup'});
+  originalConsoleError('DeckVault startup error',error);
   const box=$('#startupError');
   if(!box)return;
   $('#startupErrorText').textContent=error?.message||String(error||'Unknown startup error');
   box.classList.remove('hidden');
 }
-window.addEventListener('error',e=>showStartupError(e.error||e.message));
-window.addEventListener('unhandledrejection',e=>showStartupError(e.reason));
+window.addEventListener('error',e=>{
+  captureAppError(e.error||new Error(e.message||'Window error'),{source:'window.error',context:{filename:e.filename||'',lineno:e.lineno||'',colno:e.colno||''}});
+  showStartupError(e.error||e.message);
+});
+window.addEventListener('unhandledrejection',e=>{
+  captureAppError(e.reason||new Error('Unhandled promise rejection'),{source:'unhandledrejection'});
+  showStartupError(e.reason);
+});
 async function init(){
   $('#startupReloadBtn').onclick=()=>location.reload();
+  $('#refreshErrorLog').onclick=()=>loadErrorBacklog().catch(e=>console.error(e));
+  $('#copyDiagnostics').onclick=copyDiagnostics;
+  $('#exportDiagnostics').onclick=exportDiagnostics;
   $('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
   $('#signInForm').onsubmit=signIn;$('#signUpForm').onsubmit=signUp;$('#resetForm').onsubmit=resetPassword;
   $('#staySignedIn').checked=localStorage.getItem(STAY_SIGNED_IN_KEY)==='true';
@@ -870,7 +1070,7 @@ async function init(){
   window.addEventListener('online',()=>{
     if(currentUser&&offlineMode){
       toast('Connection restored. Syncing DeckVault…');
-      showApp(currentUser).catch(err=>console.error(err));
+      showApp(currentUser).then(()=>syncErrorBacklog()).catch(err=>console.error(err));
     }
   });
     sb.auth.onAuthStateChange((event,session)=>{
