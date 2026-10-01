@@ -1061,56 +1061,157 @@ function ebaySoldSearchUrl(x){
   u.searchParams.set('LH_Complete','1');
   return u.toString();
 }
+
+async function loadWatchState(x){
+  currentWatchState=null;
+  if(!currentUser||!navigator.onLine||offlineMode)return null;
+  const {data,error}=await sb.from('card_watchlist').select('*')
+    .eq('user_id',currentUser.id).eq('game',x.game).eq('card_id',x.cardId).eq('variant',x.variant).maybeSingle();
+  if(error){console.error(error);return null;}
+  currentWatchState=data||null;return currentWatchState;
+}
+async function saveWatchState(x){
+  if(!navigator.onLine||offlineMode)return toast('Watchlist changes need an internet connection');
+  const target=$('#watchTargetPrice').value===''?null:Number($('#watchTargetPrice').value);
+  const pct=Math.max(0,Number($('#watchChangePct').value||10));
+  const payload={user_id:currentUser.id,game:x.game,card_id:x.cardId,variant:x.variant,card_name:x.name,set_name:x.setName,image_url:x.image,target_price:target,currency:x.priceCurrency||'USD',notify_change_pct:pct};
+  const {error}=await sb.from('card_watchlist').upsert(payload,{onConflict:'user_id,game,card_id,variant'});
+  if(error)return toast('Could not save watchlist');
+  currentWatchState=payload;$('#watchCardBtn').textContent='★ Watching';$('#watchRemoveBtn').classList.remove('hidden');haptic();renderDashboard();toast('Watchlist saved');
+}
+async function removeWatchState(x){
+  const {error}=await sb.from('card_watchlist').delete().eq('user_id',currentUser.id).eq('game',x.game).eq('card_id',x.cardId).eq('variant',x.variant);
+  if(error)return toast('Could not remove watch');
+  currentWatchState=null;$('#watchCardBtn').textContent='☆ Add to Watchlist';$('#watchRemoveBtn').classList.add('hidden');renderDashboard();toast('Removed from Watchlist');
+}
+async function populateWatchControls(x){
+  const state=await loadWatchState(x);
+  if(!$('#watchCardBtn'))return;
+  $('#watchCardBtn').textContent=state?'★ Watching':'☆ Add to Watchlist';
+  $('#watchTargetPrice').value=state?.target_price??'';
+  $('#watchChangePct').value=state?.notify_change_pct??10;
+  $('#watchRemoveBtn').classList.toggle('hidden',!state);
+}
+
+async function ensureCopyRows(x){
+  if(!navigator.onLine||offlineMode)return [];
+  const {data,error}=await sb.from('collection_copies').select('*').eq('collection_item_id',x.id).order('created_at');
+  if(error)throw error;
+  let rows=data||[];
+  const missing=Math.max(0,Number(x.quantity||0)-rows.length);
+  if(missing){
+    const inserts=Array.from({length:missing},()=>({
+      user_id:currentUser.id,collection_item_id:x.id,condition:x.condition,price_paid:x.pricePaid,
+      purchase_date:x.purchaseDate||null,card_state:x.cardState||'raw',grading_company:x.gradingCompany||null,
+      grade:x.grade||null,cert_number:x.certNumber||null
+    }));
+    const {data:created,error:createErr}=await sb.from('collection_copies').insert(inserts).select();
+    if(createErr)throw createErr;rows=[...rows,...(created||[])];
+  }
+  return rows;
+}
+function copyFolderOptions(selected=''){
+  return '<option value="">No specific folder</option>'+folders.map(f=>'<option value="'+esc(f.id)+'" '+(selected===f.id?'selected':'')+'>'+esc(f.name)+'</option>').join('');
+}
+function renderCopyRows(rows){
+  const box=$('#copiesList');box.innerHTML='';
+  if(!rows.length){box.innerHTML='<div class="empty">No individual copies yet.</div>';return;}
+  rows.forEach((copy,index)=>{
+    const e=document.createElement('article');e.className='copyrow';e.dataset.copyId=copy.id;
+    e.innerHTML='<div class="copyrowhead"><strong>Copy '+(index+1)+'</strong><button class="dangerbtn" data-copy-delete type="button">Remove</button></div>'+
+      '<div class="fields">'+
+      '<label>Condition<select data-copy-condition>'+['Near Mint','Lightly Played','Moderately Played','Heavily Played','Damaged'].map(v=>'<option '+(copy.condition===v?'selected':'')+'>'+v+'</option>').join('')+'</select></label>'+
+      '<label>Price paid<input data-copy-paid type="number" min="0" step="0.01" value="'+esc(copy.price_paid??'')+'"></label>'+
+      '<label>Purchase date<input data-copy-date type="date" value="'+esc(copy.purchase_date||'')+'"></label>'+
+      '<label>Folder<select data-copy-folder>'+copyFolderOptions(copy.folder_id||'')+'</select></label>'+
+      '<label>State<select data-copy-state><option value="raw" '+(copy.card_state==='raw'?'selected':'')+'>Raw</option><option value="graded" '+(copy.card_state==='graded'?'selected':'')+'>Graded</option></select></label>'+
+      '<label>Company<input data-copy-company value="'+esc(copy.grading_company||'')+'" placeholder="PSA, CGC, BGS…"></label>'+
+      '<label>Grade<input data-copy-grade value="'+esc(copy.grade||'')+'" placeholder="10"></label>'+
+      '<label>Certification #<input data-copy-cert value="'+esc(copy.cert_number||'')+'"></label>'+
+      '<label class="fullfield">Notes<input data-copy-notes value="'+esc(copy.notes||'')+'"></label>'+
+      '</div><button class="secondary wide" data-copy-save type="button">Save copy</button>';
+    e.querySelector('[data-copy-save]').onclick=()=>saveCopyRow(copy.id,e);
+    e.querySelector('[data-copy-delete]').onclick=()=>deleteCopyRow(copy.id);
+    box.appendChild(e);
+  });
+}
+async function openCopiesManager(x){
+  if(!navigator.onLine||offlineMode)return toast('Individual copy management needs an internet connection');
+  currentCopyItem=x;$('#copiesDialogTitle').textContent='Copies of '+x.name;$('#copiesList').innerHTML='<div class="skeletonline"></div><div class="skeletonline short"></div>';$('#copiesDialog').showModal();
+  try{renderCopyRows(await ensureCopyRows(x));}catch(e){console.error(e);$('#copiesList').innerHTML='<div class="empty">Could not load copies.</div>';}
+}
+async function reloadCopies(){if(currentCopyItem)renderCopyRows(await ensureCopyRows(currentCopyItem));}
+async function saveCopyRow(id,node){
+  const payload={
+    condition:node.querySelector('[data-copy-condition]').value,
+    price_paid:node.querySelector('[data-copy-paid]').value===''?null:Number(node.querySelector('[data-copy-paid]').value),
+    purchase_date:node.querySelector('[data-copy-date]').value||null,
+    folder_id:node.querySelector('[data-copy-folder]').value||null,
+    card_state:node.querySelector('[data-copy-state]').value,
+    grading_company:node.querySelector('[data-copy-company]').value.trim()||null,
+    grade:node.querySelector('[data-copy-grade]').value.trim()||null,
+    cert_number:node.querySelector('[data-copy-cert]').value.trim()||null,
+    notes:node.querySelector('[data-copy-notes]').value.trim()||null,
+    updated_at:new Date().toISOString()
+  };
+  const {error}=await sb.from('collection_copies').update(payload).eq('id',id);
+  if(error)return toast('Could not save copy');haptic();toast('Copy saved');
+}
+async function addCopyRow(){
+  if(!currentCopyItem)return;
+  const x=currentCopyItem;
+  const {error}=await sb.from('collection_copies').insert({
+    user_id:currentUser.id,collection_item_id:x.id,condition:x.condition,price_paid:x.pricePaid,
+    purchase_date:x.purchaseDate||null,card_state:x.cardState||'raw',grading_company:x.gradingCompany||null,
+    grade:x.grade||null,cert_number:x.certNumber||null
+  });
+  if(error)return toast('Could not add copy');
+  const quantity=x.quantity+1,now=new Date().toISOString();
+  await sb.from('collection_items').update({quantity,updated_at:now}).eq('id',x.id);
+  x.quantity=quantity;x.updatedAt=now;await reloadCopies();renderLibrary();renderDashboard();
+}
+async function deleteCopyRow(id){
+  if(!currentCopyItem||!confirm('Remove this individual copy?'))return;
+  const {error}=await sb.from('collection_copies').delete().eq('id',id);if(error)return toast('Could not remove copy');
+  const quantity=Math.max(0,currentCopyItem.quantity-1);
+  if(quantity===0){await sb.from('collection_items').delete().eq('id',currentCopyItem.id);$('#copiesDialog').close();await loadCollection();renderLibrary();renderDashboard();return;}
+  await sb.from('collection_items').update({quantity,updated_at:new Date().toISOString()}).eq('id',currentCopyItem.id);
+  currentCopyItem.quantity=quantity;await reloadCopies();renderLibrary();renderDashboard();
+}
+
 async function openLibraryCardDetails(x){
   const box=$('#libraryCardDetails');
   const total=Number(x.price||0)*Number(x.quantity||0);
-  const img=x.image?'<img src="'+esc(imageUrl(x.image,'high'))+'" alt="'+esc(x.name)+'">':'<div class="librarydetailplaceholder">DV</div>';
-  box.innerHTML='<div class="librarydetailtop">'+img+'<div><div class="eyebrow">'+esc(x.setName||'Collection card')+'</div><h2>'+esc(x.name)+'</h2><div class="muted">'+(x.localId?'#'+esc(x.localId)+' • ':'')+esc(x.variant)+' • '+esc(x.condition)+'</div><div class="detailmetrics"><div><span>Current value</span><strong>'+money(total,x.priceCurrency||'USD')+'</strong></div><div><span>Price paid each</span><strong>'+money(x.pricePaid,'USD')+'</strong></div><div><span>Quantity</span><strong>'+Number(x.quantity||0)+'</strong></div></div></div></div><div class="valuationsection"><div class="eyebrow">CURRENT VALUES</div><h3>Price sources</h3><div id="providerValueGrid" class="providervaluegrid"><div class="empty">Loading provider values…</div></div><p class="valuesnote">Provider prices are shown in their native currency and may represent different market methodologies. PriceCharting requires a paid API subscription before DeckVault can retrieve its current values. Historical charts only use recorded source data; DeckVault does not invent older prices.</p></div><div class="valuationsection"><div class="pricehistoryhead"><div><div class="eyebrow">PRICE HISTORY</div><h3>Value over time</h3></div><select id="priceHistoryMetric"><option>Loading…</option></select></div><div class="historyranges"><button type="button" class="historyrange" data-range="1d">1D</button><button type="button" class="historyrange" data-range="7d">7D</button><button type="button" class="historyrange" data-range="14d">14D</button><button type="button" class="historyrange" data-range="21d">21D</button><button type="button" class="historyrange active" data-range="1m">1M</button><button type="button" class="historyrange" data-range="3m">3M</button><button type="button" class="historyrange" data-range="6m">6M</button><button type="button" class="historyrange" data-range="1y">1Y</button><button type="button" class="historyrange" data-range="5y">5Y</button><button type="button" class="historyrange" data-range="max">Max</button></div><div id="priceHistoryChart" class="pricehistorychart"><div class="historyempty">Loading price history…</div></div><div id="priceHistorySummary" class="historysummary"></div></div><div class="salescomphead"><div><div class="eyebrow">MARKET COMPS</div><h3>Recent eBay Sales</h3></div><span id="ebayCompStatus" class="pill">Checking…</span></div><div id="ebayCompList" class="salescomplist"><div class="empty">Loading verified comps…</div></div><a id="openEbaySold" class="secondary ebaylink" target="_blank" rel="noopener noreferrer">View reported sold listings on eBay ↗</a><p class="salesdisclaimer">DeckVault only treats a comp as verified when the data source can confirm it remained a completed sale. eBay does not expose refund/cancellation outcomes for arbitrary third-party public sales, so ordinary public “sold” results may include transactions later reversed.</p>';
-  $('#openEbaySold').href=ebaySoldSearchUrl(x);
-  $('#libraryCardDialog').showModal();
+  const gradeLabel=x.cardState==='graded'?((x.gradingCompany||'Graded')+(x.grade?' '+x.grade:'')+(x.certNumber?' • Cert '+x.certNumber:'')):'Raw';
+  const img=x.image?'<img id="libraryDetailImage" src="'+esc(imageUrl(x.image,'high'))+'" alt="'+esc(x.name)+'">':'<div class="librarydetailplaceholder">DV</div>';
+  box.innerHTML='<div class="librarydetailtop">'+img+'<div><div class="eyebrow">'+esc(x.setName||'Collection card')+'</div><h2>'+esc(x.name)+'</h2><div class="muted">'+(x.localId?'#'+esc(x.localId)+' • ':'')+esc(x.variant)+' • '+esc(x.condition)+'</div><div class="gradebadge">'+esc(gradeLabel)+'</div>'+
+    '<div class="detailmetrics"><div><span>Current value</span><strong>'+money(total,x.priceCurrency||'USD')+'</strong></div><div><span>Price paid each</span><strong>'+money(x.pricePaid,'USD')+'</strong></div><div><span>Quantity</span><strong>'+Number(x.quantity||0)+'</strong></div></div>'+
+    '<div class="detailactions"><button id="manageCopiesBtn" class="secondary" type="button">Manage individual copies</button></div></div></div>'+
+    '<div class="valuationsection watchsection"><div class="pagehead"><div><div class="eyebrow">WATCHLIST</div><h3>Price alerts</h3></div><button id="watchCardBtn" class="secondary" type="button">☆ Add to Watchlist</button></div>'+
+    '<div class="watchcontrols"><label>Target price<input id="watchTargetPrice" type="number" min="0" step="0.01" placeholder="Optional"></label><label>Notify on change %<input id="watchChangePct" type="number" min="0" step="1" value="10"></label><button id="watchSaveBtn" class="secondary" type="button">Save alerts</button><button id="watchRemoveBtn" class="ghost hidden" type="button">Remove</button></div></div>'+
+    '<div class="valuationsection"><div class="eyebrow">CURRENT VALUES</div><h3>Price sources</h3><div id="providerValueGrid" class="providervaluegrid"><div class="skeletonline"></div></div><p class="valuesnote">Provider prices are shown in their native currency and may represent different market methodologies. PriceCharting requires a paid API subscription before DeckVault can retrieve its current values. Historical charts only use recorded source data; DeckVault does not invent older prices.</p></div>'+
+    '<div class="valuationsection"><div class="pricehistoryhead"><div><div class="eyebrow">PRICE HISTORY</div><h3>Value over time</h3></div><select id="priceHistoryMetric"><option>Loading…</option></select></div><div class="historyranges"><button type="button" class="historyrange" data-range="1d">1D</button><button type="button" class="historyrange" data-range="7d">7D</button><button type="button" class="historyrange" data-range="14d">14D</button><button type="button" class="historyrange" data-range="21d">21D</button><button type="button" class="historyrange active" data-range="1m">1M</button><button type="button" class="historyrange" data-range="3m">3M</button><button type="button" class="historyrange" data-range="6m">6M</button><button type="button" class="historyrange" data-range="1y">1Y</button><button type="button" class="historyrange" data-range="5y">5Y</button><button type="button" class="historyrange" data-range="max">Max</button></div><div id="priceHistoryChart" class="pricehistorychart"><div class="historyempty">Loading price history…</div></div><div id="priceHistorySummary" class="historysummary"></div></div>'+
+    '<div class="salescomphead"><div><div class="eyebrow">MARKET COMPS</div><h3>Recent eBay Sales</h3></div><span id="ebayCompStatus" class="pill">Checking…</span></div><div id="ebayCompList" class="salescomplist"><div class="skeletonline"></div><div class="skeletonline short"></div></div><a id="openEbaySold" class="secondary ebaylink" target="_blank" rel="noopener noreferrer">View reported sold listings on eBay ↗</a><p class="salesdisclaimer">DeckVault only treats a comp as verified when the data source can confirm it remained a completed sale. eBay does not expose refund/cancellation outcomes for arbitrary third-party public sales, so ordinary public “sold” results may include transactions later reversed.</p>';
+  $('#openEbaySold').href=ebaySoldSearchUrl(x);$('#libraryCardDialog').showModal();
+  $('#libraryDetailImage')?.addEventListener('click',()=>openImageZoom($('#libraryDetailImage').src,x.name));
+  $('#manageCopiesBtn').onclick=()=>openCopiesManager(x);
+  $('#watchCardBtn').onclick=()=>saveWatchState(x);$('#watchSaveBtn').onclick=()=>saveWatchState(x);$('#watchRemoveBtn').onclick=()=>removeWatchState(x);
   activeHistoryRange='1m';
   if(offlineMode||!navigator.onLine){
     $('#providerValueGrid').innerHTML='<div class="providervalue selected"><span>DeckVault</span><strong>'+money(x.price,x.priceCurrency||'USD')+'</strong><small>'+esc(x.priceSource||'Last saved price')+'</small></div>';
-    $('#priceHistoryMetric').innerHTML='<option>Offline</option>';
-    $('#priceHistoryChart').innerHTML='<div class="historyempty">Price-history data needs a connection. Your last saved card value is shown above.</div>';
+    $('#priceHistoryMetric').innerHTML='<option>Offline</option>';$('#priceHistoryChart').innerHTML='<div class="historyempty">Price-history data needs a connection. Your last saved card value is shown above.</div>';
     $('#priceHistorySummary').textContent=offlineSnapshotAt?'Library synced '+new Date(offlineSnapshotAt).toLocaleString():'Using your saved offline library.';
-    $('#ebayCompStatus').textContent='Offline';
-    $('#ebayCompList').innerHTML='<div class="empty">Recent sales require an internet connection.</div>';
-    $('#openEbaySold').classList.add('hidden');
-    return;
+    $('#ebayCompStatus').textContent='Offline';$('#ebayCompList').innerHTML='<div class="empty">Recent sales require an internet connection.</div>';$('#openEbaySold').classList.add('hidden');
+    $('.watchsection').classList.add('offline-disabled');return;
   }
-  refreshCardValuation(x).catch(console.error);
-
-  const {data,error}=await sb.from('sales_comps_cache')
-    .select('provider,listing_id,title,sold_price,shipping_price,currency,sold_at,listing_url,image_url,condition_text,sale_status')
-    .eq('game',x.game)
-    .eq('card_id',x.cardId)
-    .eq('sale_status','verified_completed')
-    .order('sold_at',{ascending:false})
-    .limit(20);
-
-  const list=$('#ebayCompList'),status=$('#ebayCompStatus');
-  if(error){
-    console.error(error);
-    status.textContent='Unavailable';
-    list.innerHTML='<div class="empty">Could not load sold comps.</div>';
-    return;
-  }
-  if(!data?.length){
-    status.textContent='No verified feed yet';
-    list.innerHTML='<div class="empty">No verified eBay transactions are available for this card yet. DeckVault will not label ordinary public sold results as final transactions when refund/cancellation status cannot be verified.</div>';
-    return;
-  }
+  populateWatchControls(x).catch(console.error);refreshCardValuation(x).catch(console.error);
+  const {data,error}=await sb.from('sales_comps_cache').select('provider,listing_id,title,sold_price,shipping_price,currency,sold_at,listing_url,image_url,condition_text,sale_status')
+    .eq('game',x.game).eq('card_id',x.cardId).eq('sale_status','verified_completed').order('sold_at',{ascending:false}).limit(20);
+  const list=$('#ebayCompList'),status=$('#ebayCompStatus');list.innerHTML='';
+  if(error){console.error(error);status.textContent='Unavailable';list.innerHTML='<div class="empty">Could not load sold comps.</div>';return;}
+  if(!data?.length){status.textContent='No verified feed yet';list.innerHTML='<div class="empty">No verified eBay transactions are available for this card yet. DeckVault will not label ordinary public sold results as final transactions when refund/cancellation status cannot be verified.</div>';return;}
   status.textContent=data.length+' verified';
-  list.innerHTML='';
-  data.forEach(c=>{
-    const row=document.createElement(c.listing_url?'a':'div');
-    row.className='salescomprow';
-    if(c.listing_url){row.href=c.listing_url;row.target='_blank';row.rel='noopener noreferrer';}
-    const landed=Number(c.sold_price||0)+Number(c.shipping_price||0);
-    row.innerHTML=(c.image_url?'<img src="'+esc(c.image_url)+'" alt="">':'<div class="salescompimg">eBay</div>')+'<div class="salescompmain"><strong>'+esc(c.title)+'</strong><span>'+esc(c.condition_text||'Condition not provided')+'</span><small>'+(c.sold_at?new Date(c.sold_at).toLocaleDateString():'Date unavailable')+' • Verified completed</small></div><div class="salescompprice">'+money(c.sold_price,c.currency||'USD')+(Number(c.shipping_price||0)>0?'<small>+'+money(c.shipping_price,c.currency||'USD')+' ship</small>':'')+'<small>'+money(landed,c.currency||'USD')+' total</small></div>';
-    list.appendChild(row);
-  });
+  data.forEach(c=>{const row=document.createElement(c.listing_url?'a':'div');row.className='salescomprow';if(c.listing_url){row.href=c.listing_url;row.target='_blank';row.rel='noopener noreferrer';}const landed=Number(c.sold_price||0)+Number(c.shipping_price||0);row.innerHTML=(c.image_url?'<img src="'+esc(c.image_url)+'" alt="">':'<div class="salescompimg">eBay</div>')+'<div class="salescompmain"><strong>'+esc(c.title)+'</strong><span>'+esc(c.condition_text||'Condition not provided')+'</span><small>'+(c.sold_at?new Date(c.sold_at).toLocaleDateString():'Date unavailable')+' • Verified completed</small></div><div class="salescompprice">'+money(c.sold_price,c.currency||'USD')+(Number(c.shipping_price||0)>0?'<small>+'+money(c.shipping_price,c.currency||'USD')+' ship</small>':'')+'<small>'+money(landed,c.currency||'USD')+' total</small></div>';list.appendChild(row);});
 }
 function libraryCardFor(x){
   const e=document.createElement('article');e.className='librarycard';
