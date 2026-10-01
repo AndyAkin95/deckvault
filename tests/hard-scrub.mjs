@@ -120,7 +120,7 @@ const MOCK_SUPABASE = String.raw`
     if(table==='notifications') return terminal==='single'||terminal==='maybeSingle'?{data:notification,error:null}:{data:[notification],error:null};
     if(table==='card_watchlist') return terminal==='single'||terminal==='maybeSingle'?{data:watch,error:null}:{data:[watch],error:null};
     if(table==='collection_copies') return terminal==='single'||terminal==='maybeSingle'?{data:copies[0],error:null}:{data:copies,error:null};
-    if(table==='user_blocks'||table==='user_reports') return {data:[],error:null};
+    if(table==='user_blocks'||table==='user_reports'||table==='user_favorites') return {data:[],error:null};
     if(table==='profile_details') return {data:[],error:null};
     if(table==='admin_users') return terminal==='single'||terminal==='maybeSingle'?{data:null,error:null}:{data:[],error:null};
     if(table==='collection_lists') return terminal==='single'||terminal==='maybeSingle'?{data:tradeList,error:null}:{data:[tradeList],error:null};
@@ -189,6 +189,11 @@ const MOCK_SUPABASE = String.raw`
 })();
 `;
 
+const MOCK_ADMIN_SUPABASE = MOCK_SUPABASE.replace(
+  "if(table==='admin_users') return terminal==='single'||terminal==='maybeSingle'?{data:null,error:null}:{data:[],error:null};",
+  "if(table==='admin_users') return terminal==='single'||terminal==='maybeSingle'?{data:{user_id:user.id},error:null}:{data:[{user_id:user.id}],error:null};"
+);
+
 const NO_SESSION_SUPABASE = String.raw`
 (() => {
   const builder=()=>{let p;p=new Proxy({}, {get(_t,prop){if(prop==='then')return r=>Promise.resolve({data:[],error:null}).then(r);if(prop==='single'||prop==='maybeSingle')return ()=>Promise.resolve({data:null,error:null});return ()=>p;}});return p;};
@@ -209,9 +214,9 @@ const NO_SESSION_SUPABASE = String.raw`
 })();
 `;
 
-async function setupRoutes(page, signedIn) {
+async function setupRoutes(page, signedIn, admin=false) {
   await page.route('**/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js', route =>
-    route.fulfill({status:200,contentType:'application/javascript',body:signedIn?MOCK_SUPABASE:NO_SESSION_SUPABASE})
+    route.fulfill({status:200,contentType:'application/javascript',body:signedIn?(admin?MOCK_ADMIN_SUPABASE:MOCK_SUPABASE):NO_SESSION_SUPABASE})
   );
   await page.route('https://api.tcgdex.net/**', async route => {
     const url=route.request().url();
@@ -279,6 +284,29 @@ async function loggedOutPass(browser, pass) {
   await w.assertClean();
   await context.close();
   console.log('LOGGED-OUT PASS',pass,'OK');
+}
+
+async function adminSignedInPass(browser) {
+  const context=await browser.newContext({serviceWorkers:'block'});
+  const page=await context.newPage();
+  await setupRoutes(page,true,true);
+  const w=watch(page,'admin signed-in pass');
+  await page.goto(BASE,{waitUntil:'domcontentloaded'});
+  await page.waitForSelector('#appShell:not(.hidden)',{timeout:15000});
+  await page.waitForTimeout(500);
+  await page.click('.bottomnav [data-go="settings"]');
+  assert(await page.locator('#settingsSectionSelect option[value="admin"]').count()===1,'Administrator settings missing for admin');
+  await page.selectOption('#settingsSectionSelect','admin');
+  await page.waitForTimeout(120);
+  assert(await page.locator('#adminPanel').evaluate(el=>el.classList.contains('active')),'Admin settings pane did not activate');
+  await page.fill('#adminNoticeTarget','othercollector');
+  await page.fill('#adminNoticeTitle','VM Admin Notice');
+  await page.fill('#adminNoticeBody','Automated administrator notification test');
+  await page.click('#sendAdminNoticeBtn');
+  await page.waitForTimeout(100);
+  await w.assertClean();
+  await context.close();
+  console.log('ADMIN SIGNED-IN PASS OK');
 }
 
 async function serviceWorkerPass(browser, pass) {
@@ -376,7 +404,11 @@ async function signedInPass(browser, pass) {
   const marketCard=page.locator('.marketcard').first();
   assert(await marketCard.count()===1,'Marketplace feed did not render');
   await marketCard.click();await page.waitForTimeout(150);
-  const messageSeller=page.locator('#marketOffers [data-message]').first();
+  const saveListing=page.locator('#marketOffers [data-favorite]').first();
+  assert(await saveListing.count()===1,'Save listing action missing');
+  await saveListing.click();await page.waitForTimeout(80);
+  assert((await saveListing.innerText()).includes('Saved'),'Marketplace favorite did not toggle');
+    const messageSeller=page.locator('#marketOffers [data-message]').first();
   assert(await messageSeller.count()===1,'Message seller action missing');
   await messageSeller.click();await page.waitForSelector('#privateConversationView:not(.hidden)');
   assert((await page.locator('#privateMessageInput').getAttribute('placeholder')).includes('Pikachu'),'Marketplace card context did not reach DM composer');
@@ -423,7 +455,7 @@ async function signedInPass(browser, pass) {
     // Settings dropdown should show one focused pane at a time; admin must not appear for a non-admin.
   await page.click('.bottomnav [data-go="settings"]');
   assert(await page.locator('#settingsSectionSelect option[value="admin"]').count()===0,'Administrator settings appeared for non-admin');
-  for(const section of ['profile','marketplace','lists','valuation','backup','diagnostics','data','account']){
+  for(const section of ['profile','marketplace','lists','valuation','favorites','backup','diagnostics','data','account']){
     await page.selectOption('#settingsSectionSelect',section);
     await page.waitForTimeout(80);
     assert(await page.locator('[data-settings-pane="'+section+'"]').evaluate(el=>el.classList.contains('active')),'Settings pane did not activate: '+section);
@@ -465,6 +497,7 @@ const browser=await chromium.launch({headless:true});
 try{
   for(let pass=1;pass<=2;pass++) await loggedOutPass(browser,pass);
   for(let pass=1;pass<=2;pass++) await signedInPass(browser,pass);
+  await adminSignedInPass(browser);
   for(let pass=1;pass<=2;pass++) await serviceWorkerPass(browser,pass);
 } finally {
   await browser.close();
