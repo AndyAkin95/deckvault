@@ -21,6 +21,7 @@ const PROFILE_FIELDS=[
 let currentProfile=null;
 let isAdmin=false;
 let tradeListId=null;
+let marketplaceFeedRows=[];
 let mfaEnrollmentFactorId=null;
 let pendingAdminAction=null;
 
@@ -259,6 +260,7 @@ async function saveMarketplaceSettings(){
   if(error)return toast('Could not save marketplace status');
   currentProfile=data;
   await loadTradeList();
+  if($('#marketplace')?.classList.contains('active'))await loadMarketplaceFeed();
   toast(mode==='off'?'Marketplace hidden':'Marketplace status saved');
 }
 
@@ -311,6 +313,7 @@ async function addTradeCard(){
   if(error){console.error(error);return toast('Could not add marketplace listing');}
   $('#tradeOfferQuantity').value='1';$('#tradeAskingPrice').value='';$('#tradeOfferNote').value='';
   await loadTradeList();
+  if($('#marketplace')?.classList.contains('active'))await loadMarketplaceFeed();
   toast('Trade / Sell listing saved');
 }
 
@@ -318,7 +321,70 @@ async function removeTradeCard(itemId){
   if(!tradeListId)return;
   const {error}=await sb.from('collection_list_items').delete().eq('list_id',tradeListId).eq('collection_item_id',itemId);
   if(error)return toast('Could not remove listing');
-  await loadTradeList();toast('Listing removed');
+  await loadTradeList();
+  if($('#marketplace')?.classList.contains('active'))await loadMarketplaceFeed();
+  toast('Listing removed');
+}
+
+
+function marketplaceCardTags(row){
+  const tags=[];
+  if(row.has_trade&&row.has_sell)tags.push('<span class="marketbadge both">Trade + Sell</span>');
+  else if(row.has_trade)tags.push('<span class="marketbadge trade">Trade</span>');
+  else if(row.has_sell)tags.push('<span class="marketbadge sell">For Sale</span>');
+  return tags.join('');
+}
+
+async function loadMarketplaceFeed(){
+  if(!currentUser||!$('#marketFeed'))return;
+  const q=$('#marketFeedSearch')?.value.trim()||'';
+  const filter=$('#marketFeedFilter')?.value||'all';
+  const status=$('#marketFeedStatus');
+  const box=$('#marketFeed');
+  status.textContent='Loading active marketplace cards…';
+  box.innerHTML='';
+  const {data,error}=await sb.rpc('list_marketplace_cards',{
+    p_game:'pokemon',
+    p_search:q||null,
+    p_limit:180
+  });
+  if(error){
+    console.error(error);
+    status.textContent='Could not load marketplace cards.';
+    box.innerHTML='<div class="empty">Marketplace feed unavailable.</div>';
+    return;
+  }
+  marketplaceFeedRows=(data||[]).filter(row=>{
+    if(filter==='trade')return row.has_trade;
+    if(filter==='sell')return row.has_sell;
+    if(filter==='both')return row.has_trade&&row.has_sell;
+    return true;
+  });
+  $('#marketFeedCount').textContent=marketplaceFeedRows.length+' card'+(marketplaceFeedRows.length===1?'':'s');
+  status.textContent=marketplaceFeedRows.length?'Tap a card to see every collector offering that exact printing.':'No active listings match this search.';
+  if(!marketplaceFeedRows.length){
+    box.innerHTML='<div class="empty">No cards currently match this marketplace view.</div>';
+    return;
+  }
+  marketplaceFeedRows.forEach(row=>{
+    const e=document.createElement('button');
+    e.className='marketcard';
+    const price=row.lowest_asking_price!=null
+      ?'<div class="marketcardprice">From '+money(row.lowest_asking_price,row.price_currency||'USD')+'</div>'
+      :(row.has_trade?'<div class="marketcardprice tradeonly">Trade offers</div>':'');
+    const sellerLabel=Number(row.seller_count||0)+' collector'+(Number(row.seller_count||0)===1?'':'s');
+    const qtyLabel=Number(row.total_offer_quantity||0)+' available';
+    e.innerHTML='<div class="marketcardimg"><img loading="lazy" src="'+esc(imageUrl(row.image_url))+'" alt="'+esc(row.card_name)+'"></div><div class="marketcardbody"><strong>'+esc(row.card_name)+'</strong><span>'+esc(row.set_name)+' • #'+esc(row.local_id)+'</span><div class="marketcardtags">'+marketplaceCardTags(row)+'</div><div class="marketcardmeta"><span>'+esc(sellerLabel)+'</span><span>'+esc(qtyLabel)+'</span></div>'+price+'</div>';
+    e.onclick=()=>findTradeOffers({
+      id:row.card_id,
+      name:row.card_name,
+      localId:row.local_id,
+      setName:row.set_name,
+      image:row.image_url,
+      sellerCount:Number(row.seller_count||0)
+    });
+    box.appendChild(e);
+  });
 }
 
 async function marketCardSearch(){
@@ -342,7 +408,8 @@ async function marketCardSearch(){
 
 async function findTradeOffers(card){
   $('#marketOfferHeading').classList.remove('hidden');
-  $('#marketOfferHeading').innerHTML='<h2>'+esc(card.name)+' offers</h2><div class="muted">#'+esc(card.localId)+' • '+esc(card.id)+'</div>';
+  const count=card.sellerCount?'<div class="muted">'+card.sellerCount+' collector'+(card.sellerCount===1?'':'s')+' currently offering this printing</div>':'';
+  $('#marketOfferHeading').innerHTML='<div class="selectedmarketcard">'+(card.image?'<img src="'+esc(imageUrl(card.image))+'" alt="">':'')+'<div><div class="eyebrow">AVAILABLE FROM COLLECTORS</div><h2>'+esc(card.name)+'</h2><div class="muted">'+esc(card.setName||'')+(card.localId?' • #'+esc(card.localId):'')+'</div>'+count+'</div></div>';
   $('#marketOffers').innerHTML='<div class="empty">Checking active Trade / Sell lists…</div>';
   const {data,error}=await sb.rpc('search_trade_offers',{p_game:'pokemon',p_card_id:card.id});
   const box=$('#marketOffers');box.innerHTML='';
@@ -351,14 +418,17 @@ async function findTradeOffers(card){
   data.forEach(o=>{
     const e=document.createElement('article');e.className='offercard';
     const who=o.user_id===currentUser.id?'You':'@'+(o.username||'collector');
-    const asking=o.asking_price!=null&&['sell','both'].includes(o.marketplace_mode)?'<div class="offerprice">'+money(o.asking_price,o.price_currency||'USD')+'</div>':'';
-    e.innerHTML='<div class="offeruser">'+(o.avatar_url?'<img src="'+esc(o.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+'<div><strong>'+esc(who)+'</strong><span class="marketbadge '+esc(o.marketplace_mode)+'">'+esc(marketplaceLabel(o.marketplace_mode))+'</span></div>'+asking+'</div><div class="offerbody"><strong>'+esc(o.card_name)+'</strong><span>'+esc(o.set_name)+' • #'+esc(o.local_id)+'</span><span>'+esc(o.variant)+' • '+esc(o.condition)+' • '+esc(o.language)+'</span><span>Available quantity: '+Number(o.offer_quantity||1)+'</span>'+(o.offer_note?'<p>'+esc(o.offer_note)+'</p>':'')+(o.marketplace_note?'<p class="marketnote">'+esc(o.marketplace_note)+'</p>':'')+'<button type="button" class="secondary">View profile</button></div>';
+    let dealText='';
+    if(o.marketplace_mode==='trade')dealText='<div class="offerprice tradeonly">Trade only</div>';
+    else if(o.asking_price!=null)dealText='<div class="offerprice">'+money(o.asking_price,o.price_currency||'USD')+'</div>';
+    else if(o.marketplace_mode==='sell')dealText='<div class="offerprice unsetprice">Price not set</div>';
+    else dealText='<div class="offerprice tradeonly">Trade + Sell</div>';
+    e.innerHTML='<div class="offeruser">'+(o.avatar_url?'<img src="'+esc(o.avatar_url)+'" alt="">':'<div class="avatarfallback">DV</div>')+'<div><strong>'+esc(who)+'</strong><span class="marketbadge '+esc(o.marketplace_mode)+'">'+esc(marketplaceLabel(o.marketplace_mode))+'</span></div>'+dealText+'</div><div class="offerbody"><strong>'+esc(o.card_name)+'</strong><span>'+esc(o.set_name)+' • #'+esc(o.local_id)+'</span><span>'+esc(o.variant)+' • '+esc(o.condition)+' • '+esc(o.language)+'</span><span>Available quantity: '+Number(o.offer_quantity||1)+'</span>'+(o.offer_note?'<p>'+esc(o.offer_note)+'</p>':'')+(o.marketplace_note?'<p class="marketnote">'+esc(o.marketplace_note)+'</p>':'')+'<button type="button" class="secondary">View @'+esc(o.username||'collector')+' profile</button></div>';
     e.querySelector('button').onclick=()=>{go('community');viewProfile(o.user_id);};
     box.appendChild(e);
   });
   $('#marketOfferHeading').scrollIntoView({behavior:'smooth',block:'start'});
 }
-
 
 async function checkAdminMfa(){
   if(!isAdmin)return false;
@@ -557,6 +627,13 @@ document.addEventListener('DOMContentLoaded',()=>{
   $('#createListBtn').onclick=createList;
   $('#communitySearchBtn').onclick=searchCommunity;
   $('#marketSearchBtn').onclick=marketCardSearch;
+  $('#refreshMarketplace').onclick=loadMarketplaceFeed;
+  let marketFeedTimer=null;
+  $('#marketFeedSearch').oninput=()=>{
+    clearTimeout(marketFeedTimer);
+    marketFeedTimer=setTimeout(loadMarketplaceFeed,250);
+  };
+  $('#marketFeedFilter').onchange=loadMarketplaceFeed;
   $('#marketSearchName').onkeydown=e=>{if(e.key==='Enter')marketCardSearch();};
   $('#marketSearchNumber').onkeydown=e=>{if(e.key==='Enter')marketCardSearch();};
   $('#communitySearch').onkeydown=e=>{if(e.key==='Enter')searchCommunity();};
@@ -566,6 +643,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   $('#verifyMfaEnrollBtn').onclick=verifyAdminMfaEnrollment;
   $('#confirmAdminActionBtn').onclick=executeAdminAction;
   document.querySelectorAll('[data-go="community"]').forEach(b=>b.addEventListener('click',searchCommunity));
+  document.querySelectorAll('[data-go="marketplace"]').forEach(b=>b.addEventListener('click',loadMarketplaceFeed));
   document.querySelectorAll('[data-go="settings"]').forEach(b=>b.addEventListener('click',()=>{loadProfileSettings();loadMyLists();loadTradeList();if(isAdmin)Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit()]);}));
   sb.auth.onAuthStateChange((event,session)=>{
     if(event==='SIGNED_OUT'){
