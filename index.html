@@ -13,9 +13,51 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+<section id="authGate" class="authgate">
+  <div class="authcard">
+    <div class="authbrand"><div class="brand-mark authmark">DV</div><div><div class="authname">DeckVault</div><div class="muted">Your collection. Your account.</div></div></div>
+    <div id="signinPane">
+      <div class="eyebrow">WELCOME BACK</div>
+      <h1>Sign in</h1>
+      <p class="muted">Sign in to access your scanner and collection.</p>
+      <form id="signInForm" class="form authform">
+        <label>Email<input id="signInEmail" type="email" autocomplete="email" required placeholder="you@example.com"></label>
+        <label>Password<input id="signInPassword" type="password" autocomplete="current-password" required minlength="6" placeholder="••••••••"></label>
+        <button class="primary" type="submit">Sign in</button>
+      </form>
+      <button id="showSignUp" class="linkbtn" type="button">Create an account</button>
+      <button id="showReset" class="linkbtn subtle" type="button">Forgot password?</button>
+    </div>
+    <div id="signupPane" class="hidden">
+      <div class="eyebrow">NEW ACCOUNT</div>
+      <h1>Create account</h1>
+      <p class="muted">Your library will be tied to this account and available across devices.</p>
+      <form id="signUpForm" class="form authform">
+        <label>Email<input id="signUpEmail" type="email" autocomplete="email" required placeholder="you@example.com"></label>
+        <label>Password<input id="signUpPassword" type="password" autocomplete="new-password" required minlength="8" placeholder="At least 8 characters"></label>
+        <label>Confirm password<input id="signUpPassword2" type="password" autocomplete="new-password" required minlength="8" placeholder="Repeat password"></label>
+        <button class="primary" type="submit">Create account</button>
+      </form>
+      <button id="showSignIn" class="linkbtn" type="button">Back to sign in</button>
+    </div>
+    <div id="resetPane" class="hidden">
+      <div class="eyebrow">PASSWORD RESET</div>
+      <h1>Reset password</h1>
+      <p class="muted">We’ll send a recovery email to the address on your account.</p>
+      <form id="resetForm" class="form authform">
+        <label>Email<input id="resetEmail" type="email" autocomplete="email" required placeholder="you@example.com"></label>
+        <button class="primary" type="submit">Send reset email</button>
+      </form>
+      <button id="resetBack" class="linkbtn" type="button">Back to sign in</button>
+    </div>
+    <div id="authMessage" class="authmessage"></div>
+  </div>
+</section>
+
+<div id="appShell" class="hidden">
 <header class="topbar">
   <div class="brand"><div class="brand-mark">DV</div><div><div class="brand-name">DeckVault</div><div class="brand-sub">Card Collection Scanner</div></div></div>
-  <button id="installBtn" class="ghost hidden">Install</button>
+  <div class="topactions"><span id="accountChip" class="accountchip"></span><button id="installBtn" class="ghost hidden">Install</button></div>
 </header>
 
 <main class="shell">
@@ -45,9 +87,7 @@
   <section id="lookup" class="view">
     <div class="pagehead"><div><div class="eyebrow">CARD DATABASE</div><h1>Find a card</h1></div></div>
     <div class="panel form">
-      <label>Card game
-        <select id="gameSelect"><option value="pokemon">Pokémon TCG</option></select>
-      </label>
+      <label>Card game<select id="gameSelect"><option value="pokemon">Pokémon TCG</option></select></label>
       <label>Card name<input id="searchName" placeholder="e.g. Charizard ex"></label>
       <label>Collector number <span class="muted">optional</span><input id="searchNumber" placeholder="e.g. 199"></label>
       <button id="searchBtn" class="primary">Search</button>
@@ -69,7 +109,7 @@
       <button id="captureCard" class="secondary" disabled>Capture</button>
       <button id="retake" class="secondary hidden">Retake</button>
     </div>
-    <div class="notice"><strong>v0.1:</strong> camera capture works. Automatic OCR/image matching is the next scanner milestone.</div>
+    <div class="notice"><strong>Current scanner:</strong> camera capture works. Automatic recognition is the next milestone.</div>
     <button class="wide secondary" data-go="lookup">Identify captured card with lookup</button>
   </section>
 
@@ -81,6 +121,11 @@
 
   <section id="settings" class="view">
     <div class="pagehead"><div><div class="eyebrow">DATA & SETTINGS</div><h1>Settings</h1></div></div>
+    <div class="panel">
+      <h3>Account</h3>
+      <p id="accountEmail" class="muted"></p>
+      <button id="signOutBtn" class="secondary">Sign out</button>
+    </div>
     <div class="panel form">
       <h3>Valuation</h3>
       <label>Pokémon price source
@@ -94,7 +139,7 @@
     </div>
     <div class="panel">
       <h3>Backup & portability</h3>
-      <p>Your collection stays in this browser's local IndexedDB.</p>
+      <p>Your master collection is stored in your authenticated DeckVault account. Export backups whenever you want.</p>
       <div class="stack">
         <button id="exportJson" class="secondary">Download master backup (.json)</button>
         <button id="exportCsv" class="secondary">Download collection (.csv)</button>
@@ -103,10 +148,11 @@
       </div>
     </div>
     <div class="panel danger">
-      <h3>Local data</h3>
-      <button id="clearData" class="dangerbtn">Clear local collection</button>
+      <h3>Collection data</h3>
+      <p class="muted">This deletes only the signed-in account's DeckVault collection.</p>
+      <button id="clearData" class="dangerbtn">Clear my collection</button>
     </div>
-    <div class="panel"><strong>DeckVault v0.1</strong><p class="muted">Pokémon is the first supported provider. The collection model is built to add more card games later.</p></div>
+    <div class="panel"><strong>DeckVault v0.2</strong><p class="muted">Account authentication and cloud-synced user libraries powered by Supabase.</p></div>
   </section>
 </main>
 
@@ -117,9 +163,11 @@
   <button data-go="library">▦<small>Library</small></button>
   <button data-go="settings">⚙<small>Settings</small></button>
 </nav>
+</div>
 
 <dialog id="cardDialog"><form method="dialog"><button class="close" value="cancel">×</button><div id="dialogBody"></div></form></dialog>
 <div id="toast" class="toast"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js"></script>
 <script src="app.js" defer></script>
 </body>
 </html>
