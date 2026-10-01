@@ -31,6 +31,11 @@ const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{
 let currentUser=null, currentCard=null, stream=null, installPrompt=null, items=[];
 let offlineMode=false,offlineSnapshotAt=null;
 const OFFLINE_CACHE_VERSION=1;
+const OFFLINE_QUEUE_VERSION=1;
+const OFFLINE_QUEUE_PREFIX='deckvault-offline-queue-v1:';
+const OFFLINE_CONFLICT_PREFIX='deckvault-offline-conflicts-v1:';
+let currentCopyItem=null,currentWatchState=null;
+let analyticsSetCache=null;
 const APP_BUILD='v24';
 const ERROR_BACKLOG_KEY='deckvault-error-backlog-v1';
 const LAST_USER_KEY='deckvault-last-user-id';
@@ -252,19 +257,16 @@ function warmOfflineLibraryImages(){
   navigator.serviceWorker.ready.then(reg=>reg.active?.postMessage({type:'CACHE_URLS',urls})).catch(()=>{});
 }
 function saveOfflineSnapshot(){
-  if(!currentUser||offlineMode)return;
+  if(!currentUser)return;
   try{
+    const prior=readOfflineSnapshot(currentUser.id);
+    const syncedAt=offlineMode?(prior?.syncedAt||offlineSnapshotAt):new Date().toISOString();
     const snapshot={
-      version:OFFLINE_CACHE_VERSION,
-      userId:currentUser.id,
-      email:currentUser.email||'',
-      savedAt:new Date().toISOString(),
-      items,
-      folders,
-      folderMembership:serializeFolderMembership()
+      version:OFFLINE_CACHE_VERSION,userId:currentUser.id,email:currentUser.email||'',
+      savedAt:new Date().toISOString(),syncedAt,items,folders,folderMembership:serializeFolderMembership()
     };
     localStorage.setItem(offlineCacheKey(currentUser.id),JSON.stringify(snapshot));
-    offlineSnapshotAt=snapshot.savedAt;
+    offlineSnapshotAt=syncedAt;updateLastSyncChip(syncedAt);
   }catch(e){console.warn('Offline snapshot could not be saved',e);}
 }
 function readOfflineSnapshot(userId){
@@ -280,7 +282,7 @@ function restoreOfflineSnapshot(snapshot){
   items=Array.isArray(snapshot?.items)?snapshot.items:[];
   folders=Array.isArray(snapshot?.folders)?snapshot.folders:[];
   folderMembership=new Map((snapshot?.folderMembership||[]).map(([id,ids])=>[id,new Set(ids||[])]));
-  offlineSnapshotAt=snapshot?.savedAt||null;
+  offlineSnapshotAt=snapshot?.syncedAt||snapshot?.savedAt||null;updateLastSyncChip(offlineSnapshotAt);
   if(activeFolderId&&!folders.some(f=>f.id===activeFolderId))activeFolderId=null;
   renderFolderChips();
   populateManualFolderSelect();
@@ -291,7 +293,7 @@ function setOfflineMode(enabled,savedAt=null){
   const banner=$('#offlineBanner');
   if(banner){
     banner.classList.toggle('hidden',!offlineMode);
-    $('#offlineSavedAt').textContent=offlineMode&&savedAt?'Last synced '+new Date(savedAt).toLocaleString():'';
+    $('#offlineSavedAt').textContent=offlineMode&&savedAt?'Last synced '+new Date(savedAt).toLocaleString():'';updateLastSyncChip(savedAt||offlineSnapshotAt);
   }
   ['lookup','scanner','marketplace','community'].forEach(view=>{
     $$('[data-go="'+view+'"]').forEach(b=>b.disabled=offlineMode);
@@ -299,7 +301,7 @@ function setOfflineMode(enabled,savedAt=null){
   if($('#accountChip')&&currentUser)$('#accountChip').textContent=(currentUser.email||'Signed in')+(offlineMode?' • Offline':'');
 }
 function requireOnline(message='This action needs an internet connection.'){
-  if(offlineMode||!navigator.onLine){toast(message+' Offline mode is read-only.');return false;}
+  if(offlineMode||!navigator.onLine){toast(message);return false;}
   return true;
 }
 function isConnectivityError(error){
@@ -319,6 +321,163 @@ async function showOfflineApp(user){
   renderDashboard();renderLibrary();
   if(!document.querySelector('.view.active')||['lookup','scanner','marketplace','community'].includes(document.querySelector('.view.active')?.id))go('library');
   return true;
+}
+
+
+function haptic(ms=24){try{navigator.vibrate?.(ms);}catch{}}
+function updateLastSyncChip(value=offlineSnapshotAt){
+  const chip=$('#lastSyncChip');if(!chip)return;
+  if(!value){chip.textContent='Not synced';return;}
+  chip.textContent=(offlineMode?'Offline • ':'Synced • ')+new Date(value).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+}
+function offlineQueueKey(){return OFFLINE_QUEUE_PREFIX+(currentUser?.id||localStorage.getItem(LAST_USER_KEY)||'anonymous');}
+function offlineConflictKey(){return OFFLINE_CONFLICT_PREFIX+(currentUser?.id||localStorage.getItem(LAST_USER_KEY)||'anonymous');}
+function readOfflineQueue(){try{const v=JSON.parse(localStorage.getItem(offlineQueueKey())||'[]');return Array.isArray(v)?v:[];}catch{return [];}}
+function writeOfflineQueue(rows){localStorage.setItem(offlineQueueKey(),JSON.stringify(rows||[]));updateOfflineQueueStatus();}
+function queueOfflineMutation(type,payload,baseUpdatedAt=null){
+  const q=readOfflineQueue();q.push({id:crypto.randomUUID(),type,payload,baseUpdatedAt,createdAt:new Date().toISOString()});writeOfflineQueue(q);saveOfflineSnapshot();toast('Saved offline — will sync when connected');
+}
+function readOfflineConflicts(){try{const v=JSON.parse(localStorage.getItem(offlineConflictKey())||'[]');return Array.isArray(v)?v:[];}catch{return [];}}
+function addOfflineConflict(op,serverRow,reason){
+  const rows=readOfflineConflicts();rows.unshift({id:crypto.randomUUID(),op,serverRow,reason,createdAt:new Date().toISOString()});localStorage.setItem(offlineConflictKey(),JSON.stringify(rows.slice(0,100)));updateOfflineQueueStatus();
+}
+function updateOfflineQueueStatus(){
+  const el=$('#offlineQueueStatus');if(!el)return;
+  const q=readOfflineQueue().length,c=readOfflineConflicts().length;
+  el.textContent=q+' queued change'+(q===1?'':'s')+(c?' • '+c+' conflict'+(c===1?'':'s'):'');
+}
+function renderOfflineConflicts(){
+  const box=$('#offlineConflictsList');if(!box)return;
+  const rows=readOfflineConflicts();box.innerHTML='';
+  if(!rows.length){box.innerHTML='<div class="empty">No sync conflicts.</div>';return;}
+  rows.forEach(r=>{
+    const e=document.createElement('article');e.className='panel';
+    e.innerHTML='<strong>'+esc(r.op?.type||'Offline change')+'</strong><p>'+esc(r.reason||'A newer server change was found.')+'</p><small>'+new Date(r.createdAt).toLocaleString()+'</small>';
+    box.appendChild(e);
+  });
+}
+async function syncOfflineQueue(){
+  if(!currentUser||!navigator.onLine)return false;
+  const queue=readOfflineQueue();if(!queue.length){updateOfflineQueueStatus();return true;}
+  const remaining=[];
+  for(const op of queue){
+    try{
+      if(op.type==='collection_insert'){
+        const {error}=await sb.from('collection_items').insert(op.payload);
+        if(error&&error.code!=='23505')throw error;
+      }else if(op.type==='quantity_update'){
+        const {data:server,error:getErr}=await sb.from('collection_items').select('id,updated_at,quantity').eq('id',op.payload.id).maybeSingle();
+        if(getErr)throw getErr;
+        if(server&&op.baseUpdatedAt&&new Date(server.updated_at)>new Date(op.baseUpdatedAt)){
+          addOfflineConflict(op,server,'Quantity was changed on the server after this device went offline.');continue;
+        }
+        const {error}=await sb.from('collection_items').update({quantity:op.payload.quantity,updated_at:op.payload.updated_at}).eq('id',op.payload.id);
+        if(error)throw error;
+      }else if(op.type==='collection_delete'){
+        const {data:server,error:getErr}=await sb.from('collection_items').select('id,updated_at').eq('id',op.payload.id).maybeSingle();
+        if(getErr)throw getErr;
+        if(server&&op.baseUpdatedAt&&new Date(server.updated_at)>new Date(op.baseUpdatedAt)){
+          addOfflineConflict(op,server,'Card changed on the server after this device went offline.');continue;
+        }
+        const {error}=await sb.from('collection_items').delete().eq('id',op.payload.id);if(error)throw error;
+      }else if(op.type==='folder_create'){
+        const {error}=await sb.from('collection_folders').insert(op.payload);if(error&&error.code!=='23505')throw error;
+      }else if(op.type==='folder_assignments'){
+        const {itemId,folderIds}=op.payload;
+        const {error:dErr}=await sb.from('collection_folder_items').delete().eq('collection_item_id',itemId);if(dErr)throw dErr;
+        if(folderIds?.length){const {error:iErr}=await sb.from('collection_folder_items').insert(folderIds.map(folder_id=>({folder_id,collection_item_id:itemId})));if(iErr)throw iErr;}
+      }else{
+        remaining.push(op);
+      }
+    }catch(e){console.error('Offline sync mutation failed',op,e);remaining.push(op);}
+  }
+  writeOfflineQueue(remaining);
+  return remaining.length===0;
+}
+async function runOfflineSyncAndReload(){
+  if(!navigator.onLine)return toast('Still offline');
+  const ok=await syncOfflineQueue();
+  await loadCollection();await loadFolders();saveOfflineSnapshot();renderDashboard();renderLibrary();updateLastSyncChip();
+  toast(ok?'Offline changes synced':'Some changes still need attention');
+}
+function parseCsvText(text){
+  const rows=[];let row=[],cell='',quote=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i],next=text[i+1];
+    if(ch==='"'&&quote&&next==='"'){cell+='"';i++;continue;}
+    if(ch==='"'){quote=!quote;continue;}
+    if(ch===','&&!quote){row.push(cell);cell='';continue;}
+    if((ch==='\n'||ch==='\r')&&!quote){
+      if(ch==='\r'&&next==='\n')i++;
+      row.push(cell);cell='';
+      if(row.some(v=>v!==''))rows.push(row);
+      row=[];
+      continue;
+    }
+    cell+=ch;
+  }
+  row.push(cell);if(row.some(v=>v!==''))rows.push(row);
+  return rows;
+}
+function mapImportedCsv(rows,format='auto'){
+  if(rows.length<2)return [];
+  const headers=rows[0].map(h=>String(h||'').trim().toLowerCase());
+  const idx=(...names)=>{for(const n of names){const i=headers.indexOf(n);if(i>=0)return i;}return -1;};
+  const at=(r,...names)=>{const i=idx(...names);return i>=0?String(r[i]??'').trim():'';};
+  return rows.slice(1).map((r,n)=>{
+    const name=at(r,'card name','name','product name','card');
+    if(!name)return null;
+    const setName=at(r,'set','set name','expansion');
+    const localId=at(r,'card number','number','collector number','card #');
+    const qty=Number(at(r,'quantity','qty')||1)||1;
+    const condition=at(r,'condition')||'Near Mint';
+    const language=at(r,'language')||'English';
+    const variant=at(r,'variant','printing','finish')||'Normal';
+    const providerId=at(r,'provider id','tcgplayer id','card id','id');
+    const price=Number(at(r,'current price','price','market price','market')||'');
+    const paid=Number(at(r,'price paid','cost','purchase price')||'');
+    return {
+      game:'pokemon',cardId:providerId||('import:'+crypto.randomUUID()),name,localId,setId:'',setName,rarity:'',
+      variant,condition,language,quantity:Math.max(1,qty),image:'',price:Number.isFinite(price)?price:null,
+      pricePaid:Number.isFinite(paid)?paid:null,priceCurrency:'USD',priceSource:'Imported CSV',priceUpdatedAt:null,
+      entrySource:providerId?'provider':'manual',cardState:'raw',gradingCompany:'',grade:'',certNumber:'',purchaseDate:'',
+      notes:'Imported from '+format+' row '+(n+2),addedAt:new Date().toISOString()
+    };
+  }).filter(Boolean);
+}
+async function importCollectionCsv(file,format){
+  if(!navigator.onLine)return toast('CSV import needs an internet connection');
+  const rows=parseCsvText(await file.text()),mapped=mapImportedCsv(rows,format);
+  if(!mapped.length)return $('#importCollectionStatus').textContent='No recognizable card rows found.';
+  let imported=0,updated=0;
+  for(const obj of mapped){
+    const old=items.find(i=>i.cardId===obj.cardId&&i.variant===obj.variant&&i.condition===obj.condition&&i.language===obj.language);
+    if(old){const {error}=await sb.from('collection_items').update({...toRow({...obj,id:old.id}),quantity:old.quantity+obj.quantity}).eq('id',old.id);if(!error)updated++;}
+    else{const {error}=await sb.from('collection_items').insert({...toRow(obj),added_at:obj.addedAt});if(!error)imported++;}
+  }
+  await loadCollection();saveOfflineSnapshot();renderDashboard();renderLibrary();
+  $('#importCollectionStatus').textContent=imported+' added • '+updated+' merged';
+}
+async function runUniversalSearch(){
+  const q=$('#universalSearchInput').value.trim().toLowerCase(),box=$('#universalSearchResults');box.innerHTML='';
+  if(q.length<2){box.innerHTML='<div class="empty">Type at least 2 characters.</div>';return;}
+  const local=items.filter(x=>[x.name,x.setName,x.localId].some(v=>String(v||'').toLowerCase().includes(q))).slice(0,8);
+  if(local.length){
+    const h=document.createElement('h3');h.textContent='Your library';box.appendChild(h);
+    local.forEach(x=>{const b=document.createElement('button');b.className='globalsearchrow';b.innerHTML='<strong>'+esc(x.name)+'</strong><span>'+esc(x.setName||'')+' • #'+esc(x.localId||'')+'</span>';b.onclick=()=>{$('#universalSearchDialog').close();go('library');openLibraryCardDetails(x);};box.appendChild(b);});
+  }
+  if(navigator.onLine&&window.searchSocialUniversal){
+    const extra=await window.searchSocialUniversal(q);extra.forEach(node=>box.appendChild(node));
+  }
+  if(!box.children.length)box.innerHTML='<div class="empty">No matches.</div>';
+}
+function openImageZoom(src,alt='Card image'){
+  if(!src)return;$('#imageZoomTarget').src=src;$('#imageZoomTarget').alt=alt;$('#imageZoomDialog').showModal();
+}
+function installSwipeBack(el,callback){
+  if(!el)return;let sx=0,sy=0;
+  el.addEventListener('touchstart',e=>{const t=e.changedTouches[0];sx=t.clientX;sy=t.clientY;},{passive:true});
+  el.addEventListener('touchend',e=>{const t=e.changedTouches[0];if(sx<55&&t.clientX-sx>90&&Math.abs(t.clientY-sy)<80)callback();},{passive:true});
 }
 
 async function getCurrentTerms(){
@@ -564,8 +723,8 @@ async function saveManualCard(){if(!requireOnline('Adding cards needs an interne
   await loadCollection();await loadFolders();renderDashboard();renderLibrary();toast(name+' added');
 }
 
-function fromRow(r){return {id:r.id,game:r.game,cardId:r.card_id,name:r.name,localId:r.local_id,setId:r.set_id,setName:r.set_name,rarity:r.rarity,variant:r.variant,condition:r.condition,language:r.language,quantity:r.quantity,image:r.image_url,price:r.price==null?null:Number(r.price),pricePaid:r.price_paid==null?null:Number(r.price_paid),priceCurrency:r.price_currency,priceSource:r.price_source,priceUpdatedAt:r.price_updated_at,entrySource:r.entry_source||'provider',notes:r.notes||'',addedAt:r.added_at,updatedAt:r.updated_at};}
-function toRow(x){return {user_id:currentUser.id,game:x.game,card_id:x.cardId,name:x.name,local_id:x.localId,set_id:x.setId,set_name:x.setName,rarity:x.rarity,variant:x.variant,condition:x.condition,language:x.language,quantity:x.quantity,image_url:x.image,price:x.price,price_paid:x.pricePaid,price_currency:x.priceCurrency,price_source:x.priceSource,price_updated_at:x.priceUpdatedAt,entry_source:x.entrySource||'provider',notes:x.notes||'',updated_at:new Date().toISOString()};}
+function fromRow(r){return {id:r.id,game:r.game,cardId:r.card_id,name:r.name,localId:r.local_id,setId:r.set_id,setName:r.set_name,rarity:r.rarity,variant:r.variant,condition:r.condition,language:r.language,quantity:r.quantity,image:r.image_url,price:r.price==null?null:Number(r.price),pricePaid:r.price_paid==null?null:Number(r.price_paid),priceCurrency:r.price_currency,priceSource:r.price_source,priceUpdatedAt:r.price_updated_at,entrySource:r.entry_source||'provider',cardState:r.card_state||'raw',gradingCompany:r.grading_company||'',grade:r.grade||'',certNumber:r.cert_number||'',purchaseDate:r.purchase_date||'',notes:r.notes||'',addedAt:r.added_at,updatedAt:r.updated_at};}
+function toRow(x){return {user_id:currentUser.id,game:x.game,card_id:x.cardId,name:x.name,local_id:x.localId,set_id:x.setId,set_name:x.setName,rarity:x.rarity,variant:x.variant,condition:x.condition,language:x.language,quantity:x.quantity,image_url:x.image,price:x.price,price_paid:x.pricePaid,price_currency:x.priceCurrency,price_source:x.priceSource,price_updated_at:x.priceUpdatedAt,entry_source:x.entrySource||'provider',card_state:x.cardState||'raw',grading_company:x.gradingCompany||null,grade:x.grade||null,cert_number:x.certNumber||null,purchase_date:x.purchaseDate||null,notes:x.notes||'',updated_at:new Date().toISOString()};}
 async function signIn(e){
   e.preventDefault();
   const stay=$('#staySignedIn')?.checked===true;
