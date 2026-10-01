@@ -29,10 +29,15 @@ const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{
   }
 });
 let currentUser=null, currentCard=null, stream=null, installPrompt=null, items=[];
+let folders=[], folderMembership=new Map(), activeFolderId=null, folderAssignItemId=null;
 const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const money=(n,c='USD')=>n==null||Number.isNaN(Number(n))?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:c}).format(Number(n));
-const imageUrl=(base,q='low')=>base?base+'/'+q+'.webp':'';
+const imageUrl=(base,q='low')=>{
+  if(!base)return '';
+  if(/^https?:\/\//i.test(base)&&!base.includes('tcgdex.net'))return base;
+  return base+'/'+q+'.webp';
+};
 function toast(m){const e=$('#toast');e.textContent=m;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),1800);}
 function setAuthMessage(m,bad=false){const e=$('#authMessage');e.textContent=m||'';e.classList.toggle('error',bad);}
 function showPane(id){['signinPane','signupPane','applicationPane','resetPane'].forEach(x=>{const e=$('#'+x);if(e)e.classList.toggle('hidden',x!==id);});setAuthMessage('');}
@@ -108,7 +113,7 @@ async function showApp(user,termsJustAccepted=false){
   $('#appShell').classList.remove('hidden');
   $('#accountChip').textContent=user.email||'Signed in';
   $('#accountEmail').textContent=user.email||'';
-  await loadCollection();renderDashboard();renderLibrary();
+  await loadCollection();await loadFolders();renderDashboard();renderLibrary();
   if(window.refreshSocialState)setTimeout(()=>window.refreshSocialState(),50);
   return true;
 }
@@ -118,8 +123,151 @@ async function loadCollection(){
   if(error){console.error(error);toast('Could not load collection');return;}
   items=(data||[]).map(fromRow);
 }
-function fromRow(r){return {id:r.id,game:r.game,cardId:r.card_id,name:r.name,localId:r.local_id,setId:r.set_id,setName:r.set_name,rarity:r.rarity,variant:r.variant,condition:r.condition,language:r.language,quantity:r.quantity,image:r.image_url,price:r.price==null?null:Number(r.price),priceCurrency:r.price_currency,priceSource:r.price_source,priceUpdatedAt:r.price_updated_at,notes:r.notes||'',addedAt:r.added_at,updatedAt:r.updated_at};}
-function toRow(x){return {user_id:currentUser.id,game:x.game,card_id:x.cardId,name:x.name,local_id:x.localId,set_id:x.setId,set_name:x.setName,rarity:x.rarity,variant:x.variant,condition:x.condition,language:x.language,quantity:x.quantity,image_url:x.image,price:x.price,price_currency:x.priceCurrency,price_source:x.priceSource,price_updated_at:x.priceUpdatedAt,notes:x.notes||'',updated_at:new Date().toISOString()};}
+async function loadFolders(){
+  if(!currentUser){folders=[];folderMembership=new Map();return;}
+  const [fRes,mRes]=await Promise.all([
+    sb.from('collection_folders').select('*').eq('user_id',currentUser.id).order('name'),
+    sb.from('collection_folder_items').select('folder_id,collection_item_id')
+  ]);
+  if(fRes.error||mRes.error){console.error(fRes.error||mRes.error);toast('Could not load library folders');return;}
+  folders=fRes.data||[];
+  folderMembership=new Map();
+  (mRes.data||[]).forEach(row=>{
+    if(!folderMembership.has(row.folder_id))folderMembership.set(row.folder_id,new Set());
+    folderMembership.get(row.folder_id).add(row.collection_item_id);
+  });
+  if(activeFolderId&&!folders.some(f=>f.id===activeFolderId))activeFolderId=null;
+  renderFolderChips();
+  populateManualFolderSelect();
+}
+
+function folderItems(folderId){
+  if(!folderId)return [...items];
+  const ids=folderMembership.get(folderId)||new Set();
+  return items.filter(x=>ids.has(x.id));
+}
+function collectionValue(rows){
+  return rows.reduce((sum,x)=>sum+((x.priceCurrency==='USD'||!x.priceCurrency)?Number(x.price||0)*Number(x.quantity||0):0),0);
+}
+function renderFolderChips(){
+  const box=$('#libraryFolderChips');if(!box)return;
+  box.innerHTML='';
+  const main=document.createElement('button');
+  main.type='button';main.className='folderchip'+(!activeFolderId?' active':'');
+  main.textContent='Main Library';
+  main.onclick=()=>{activeFolderId=null;renderFolderChips();renderLibrary();};
+  box.appendChild(main);
+  folders.forEach(folder=>{
+    const b=document.createElement('button');b.type='button';b.className='folderchip'+(activeFolderId===folder.id?' active':'');
+    b.textContent=folder.name;
+    b.onclick=()=>{activeFolderId=folder.id;renderFolderChips();renderLibrary();};
+    box.appendChild(b);
+  });
+}
+function populateManualFolderSelect(){
+  const sel=$('#manualFolder');if(!sel)return;
+  sel.innerHTML='<option value="">Main Library only</option>'+folders.map(f=>'<option value="'+esc(f.id)+'">'+esc(f.name)+'</option>').join('');
+}
+async function createFolder(){
+  const name=prompt('Folder name');
+  if(!name||!name.trim())return;
+  const {error}=await sb.from('collection_folders').insert({user_id:currentUser.id,name:name.trim()});
+  if(error)return toast(error.code==='23505'?'A folder with that name already exists':'Could not create folder');
+  await loadFolders();renderLibrary();toast('Folder created');
+}
+function renderFolderManager(){
+  const box=$('#folderManagerList');box.innerHTML='';
+  if(!folders.length){box.innerHTML='<div class="empty">No folders yet.</div>';return;}
+  folders.forEach(folder=>{
+    const row=document.createElement('div');row.className='foldermanagerrow';
+    row.innerHTML='<strong>'+esc(folder.name)+'</strong><div><button class="secondary" data-rename>Rename</button><button class="dangerbtn" data-delete>Delete</button></div>';
+    row.querySelector('[data-rename]').onclick=async()=>{
+      const name=prompt('Rename folder',folder.name);
+      if(!name||!name.trim()||name.trim()===folder.name)return;
+      const {error}=await sb.from('collection_folders').update({name:name.trim(),updated_at:new Date().toISOString()}).eq('id',folder.id);
+      if(error)return toast('Could not rename folder');
+      await loadFolders();renderFolderManager();renderLibrary();
+    };
+    row.querySelector('[data-delete]').onclick=async()=>{
+      if(!confirm('Delete folder "'+folder.name+'"? Cards stay in your Main Library.'))return;
+      const {error}=await sb.from('collection_folders').delete().eq('id',folder.id);
+      if(error)return toast('Could not delete folder');
+      if(activeFolderId===folder.id)activeFolderId=null;
+      await loadFolders();renderFolderManager();renderLibrary();toast('Folder deleted');
+    };
+    box.appendChild(row);
+  });
+}
+function openFolderAssignments(item){
+  folderAssignItemId=item.id;
+  $('#folderAssignTitle').textContent='Folders for '+item.name;
+  const box=$('#folderAssignOptions');box.innerHTML='';
+  if(!folders.length){box.innerHTML='<div class="empty">Create a folder first.</div>';}
+  folders.forEach(folder=>{
+    const checked=(folderMembership.get(folder.id)||new Set()).has(item.id);
+    const label=document.createElement('label');label.className='foldercheck';
+    label.innerHTML='<input type="checkbox" value="'+esc(folder.id)+'" '+(checked?'checked':'')+'><span>'+esc(folder.name)+'</span>';
+    box.appendChild(label);
+  });
+  $('#folderAssignDialog').showModal();
+}
+async function saveFolderAssignments(){
+  if(!folderAssignItemId)return;
+  const selected=$('#folderAssignOptions input:checked').map(x=>x.value);
+  for(const folder of folders){
+    const has=(folderMembership.get(folder.id)||new Set()).has(folderAssignItemId);
+    const want=selected.includes(folder.id);
+    if(want&&!has)await sb.from('collection_folder_items').insert({folder_id:folder.id,collection_item_id:folderAssignItemId});
+    if(!want&&has)await sb.from('collection_folder_items').delete().eq('folder_id',folder.id).eq('collection_item_id',folderAssignItemId);
+  }
+  $('#folderAssignDialog').close();
+  await loadFolders();renderLibrary();toast('Folders updated');
+}
+function openManualCard(){
+  $('#manualCardMessage').textContent='';
+  $('#manualName').value='';$('#manualSetName').value='';$('#manualLocalId').value='';
+  $('#manualVariant').value='Normal';$('#manualCondition').value='Near Mint';$('#manualLanguage').value='English';
+  $('#manualQuantity').value='1';$('#manualCurrentValue').value='';$('#manualPricePaid').value='';$('#manualImageUrl').value='';
+  populateManualFolderSelect();
+  $('#manualCardDialog').showModal();
+}
+async function saveManualCard(){
+  const name=$('#manualName').value.trim();
+  if(!name){$('#manualCardMessage').textContent='Card name is required.';$('#manualCardMessage').classList.add('error');return;}
+  const qty=Math.max(1,parseInt($('#manualQuantity').value||'1',10));
+  const now=new Date().toISOString();
+  const obj={
+    game:$('#manualGame').value,
+    cardId:'manual:'+crypto.randomUUID(),
+    name,
+    localId:$('#manualLocalId').value.trim(),
+    setId:'',
+    setName:$('#manualSetName').value.trim(),
+    rarity:'',
+    variant:$('#manualVariant').value.trim()||'Normal',
+    condition:$('#manualCondition').value,
+    language:$('#manualLanguage').value.trim()||'English',
+    quantity:qty,
+    image:$('#manualImageUrl').value.trim(),
+    price:$('#manualCurrentValue').value===''?null:Number($('#manualCurrentValue').value),
+    pricePaid:$('#manualPricePaid').value===''?null:Number($('#manualPricePaid').value),
+    priceCurrency:'USD',
+    priceSource:'Manual',
+    priceUpdatedAt:now,
+    entrySource:'manual',
+    notes:'',
+    addedAt:now
+  };
+  const {data,error}=await sb.from('collection_items').insert({...toRow(obj),added_at:now}).select().single();
+  if(error){$('#manualCardMessage').textContent=error.message;$('#manualCardMessage').classList.add('error');return;}
+  const folderId=$('#manualFolder').value;
+  if(folderId)await sb.from('collection_folder_items').insert({folder_id:folderId,collection_item_id:data.id});
+  $('#manualCardDialog').close();
+  await loadCollection();await loadFolders();renderDashboard();renderLibrary();toast(name+' added');
+}
+
+function fromRow(r){return {id:r.id,game:r.game,cardId:r.card_id,name:r.name,localId:r.local_id,setId:r.set_id,setName:r.set_name,rarity:r.rarity,variant:r.variant,condition:r.condition,language:r.language,quantity:r.quantity,image:r.image_url,price:r.price==null?null:Number(r.price),pricePaid:r.price_paid==null?null:Number(r.price_paid),priceCurrency:r.price_currency,priceSource:r.price_source,priceUpdatedAt:r.price_updated_at,entrySource:r.entry_source||'provider',notes:r.notes||'',addedAt:r.added_at,updatedAt:r.updated_at};}
+function toRow(x){return {user_id:currentUser.id,game:x.game,card_id:x.cardId,name:x.name,local_id:x.localId,set_id:x.setId,set_name:x.setName,rarity:x.rarity,variant:x.variant,condition:x.condition,language:x.language,quantity:x.quantity,image_url:x.image,price:x.price,price_paid:x.pricePaid,price_currency:x.priceCurrency,price_source:x.priceSource,price_updated_at:x.priceUpdatedAt,entry_source:x.entrySource||'provider',notes:x.notes||'',updated_at:new Date().toISOString()};}
 async function signIn(e){
   e.preventDefault();
   const stay=$('#staySignedIn')?.checked===true;
@@ -151,22 +299,82 @@ function pricePref(){return localStorage.getItem('deckvault-price-source')||'tcg
 function pokemonPrice(c,v,s=pricePref()){const p=c.pricing||{};if(s.startsWith('tcgplayer')){const o=variantPriceObject(p.tcgplayer,v);return {value:s==='tcgplayer-mid'?(o&&o.midPrice):(o&&o.marketPrice),currency:(p.tcgplayer&&p.tcgplayer.unit)||'USD',label:s==='tcgplayer-mid'?'TCGplayer Mid':'TCGplayer Market'};}const cm=p.cardmarket||{},foil=v.toLowerCase().includes('holo'),k=s==='cardmarket-7'?(foil?'avg7-holo':'avg7'):(foil?'avg30-holo':'avg30');return {value:cm[k],currency:cm.unit||'EUR',label:s==='cardmarket-7'?'Cardmarket 7-day':'Cardmarket 30-day'};}
 async function search(){const n=$('#searchName').value.trim(),no=$('#searchNumber').value.trim();if(!n&&!no)return toast('Enter a name or collector number');$('#searchStatus').textContent='Searching TCGdex…';try{const cards=await pokemonSearch(n,no);$('#searchStatus').textContent=cards.length+' match'+(cards.length===1?'':'es')+' found';renderResults(cards);}catch(e){$('#searchStatus').textContent=e.message;}}
 function renderResults(cards){const b=$('#results');b.innerHTML='';if(!cards.length){b.innerHTML='<div class="empty">No matching cards found.</div>';return;}cards.slice(0,60).forEach(c=>{const e=document.createElement('article');e.className='result';e.innerHTML='<img loading="lazy" src="'+esc(imageUrl(c.image))+'" alt="'+esc(c.name)+'"><div class="info"><strong>'+esc(c.name)+'</strong><div class="meta">#'+esc(c.localId)+' • '+esc(c.id)+'</div><button>View / Add</button></div>';e.querySelector('button').onclick=()=>openCard(c.id);b.appendChild(e);});}
-async function openCard(id){$('#dialogBody').innerHTML='<div class="empty">Loading card…</div>';$('#cardDialog').showModal();try{currentCard=await pokemonCard(id);const variants=pokemonVariants(currentCard),p=pokemonPrice(currentCard,variants[0]);$('#dialogBody').innerHTML='<div class="dialogtop"><img src="'+esc(imageUrl(currentCard.image,'high'))+'"><div><div class="eyebrow">'+esc(currentCard.set?.name||'Pokémon TCG')+'</div><h2>'+esc(currentCard.name)+'</h2><div class="muted">#'+esc(currentCard.localId)+(currentCard.rarity?' • '+esc(currentCard.rarity):'')+'</div><div class="pricebox"><div id="dialogPriceLabel" class="muted">'+esc(p.label)+'</div><div id="dialogPrice" class="pricebig">'+money(p.value,p.currency)+'</div></div></div></div><div class="fields"><label>Variant<select id="variant">'+variants.map(v=>'<option>'+esc(v)+'</option>').join('')+'</select></label><label>Condition<select id="condition"><option>Near Mint</option><option>Lightly Played</option><option>Moderately Played</option><option>Heavily Played</option><option>Damaged</option></select></label><label>Language<select id="language"><option>English</option><option>Japanese</option><option>French</option><option>German</option><option>Italian</option><option>Spanish</option></select></label><label>Quantity<input id="qty" type="number" min="1" value="1"></label></div><div class="dialogactions"><button id="addCard" type="button" class="primary">Add to collection</button><button class="secondary" value="cancel">Cancel</button></div>';$('#variant').onchange=()=>{const q=pokemonPrice(currentCard,$('#variant').value);$('#dialogPrice').textContent=money(q.value,q.currency);$('#dialogPriceLabel').textContent=q.label;};$('#addCard').onclick=addCurrent;}catch(e){$('#dialogBody').innerHTML='<div class="empty">'+esc(e.message)+'</div>';}}
-async function addCurrent(){const variant=$('#variant').value,condition=$('#condition').value,language=$('#language').value,qty=Math.max(1,parseInt($('#qty').value||'1',10)),p=pokemonPrice(currentCard,variant),old=items.find(x=>x.game==='pokemon'&&x.cardId===currentCard.id&&x.variant===variant&&x.condition===condition&&x.language===language),now=new Date().toISOString();const x={game:'pokemon',cardId:currentCard.id,name:currentCard.name,localId:String(currentCard.localId),setId:currentCard.set?.id||'',setName:currentCard.set?.name||'',rarity:currentCard.rarity||'',variant,condition,language,quantity:(old?old.quantity:0)+qty,image:currentCard.image||'',price:p.value==null?null:Number(p.value),priceCurrency:p.currency,priceSource:p.label,priceUpdatedAt:now,notes:old?.notes||'',addedAt:old?.addedAt||now};let q;if(old)q=await sb.from('collection_items').update(toRow(x)).eq('id',old.id).select().single();else q=await sb.from('collection_items').insert({...toRow(x),added_at:now}).select().single();if(q.error)return toast('Could not save card');$('#cardDialog').close();await loadCollection();renderDashboard();toast(currentCard.name+' saved');}
+
+async function openCard(id){
+  $('#dialogBody').innerHTML='<div class="empty">Loading card…</div>';$('#cardDialog').showModal();
+  try{
+    currentCard=await pokemonCard(id);
+    const variants=pokemonVariants(currentCard),p=pokemonPrice(currentCard,variants[0]);
+    const folderOptions='<option value="">Main Library only</option>'+folders.map(f=>'<option value="'+esc(f.id)+'">'+esc(f.name)+'</option>').join('');
+    $('#dialogBody').innerHTML='<div class="dialogtop"><img src="'+esc(imageUrl(currentCard.image,'high'))+'"><div><div class="eyebrow">'+esc(currentCard.set?.name||'Pokémon TCG')+'</div><h2>'+esc(currentCard.name)+'</h2><div class="muted">#'+esc(currentCard.localId)+(currentCard.rarity?' • '+esc(currentCard.rarity):'')+'</div><div class="pricebox"><div id="dialogPriceLabel" class="muted">'+esc(p.label)+'</div><div id="dialogPrice" class="pricebig">'+money(p.value,p.currency)+'</div></div></div></div><div class="fields"><label>Variant<select id="variant">'+variants.map(v=>'<option>'+esc(v)+'</option>').join('')+'</select></label><label>Condition<select id="condition"><option>Near Mint</option><option>Lightly Played</option><option>Moderately Played</option><option>Heavily Played</option><option>Damaged</option></select></label><label>Language<select id="language"><option>English</option><option>Japanese</option><option>French</option><option>German</option><option>Italian</option><option>Spanish</option></select></label><label>Quantity<input id="qty" type="number" min="1" value="1"></label><label>Price paid each <span class="muted">optional</span><input id="pricePaid" type="number" min="0" step="0.01" placeholder="0.00"></label><label>Add to folder<select id="addFolder">'+folderOptions+'</select></label></div><div class="dialogactions"><button id="addCard" type="button" class="primary">Add to collection</button><button class="secondary" value="cancel">Cancel</button></div>';
+    $('#variant').onchange=()=>{const q=pokemonPrice(currentCard,$('#variant').value);$('#dialogPrice').textContent=money(q.value,q.currency);$('#dialogPriceLabel').textContent=q.label;};
+    $('#addCard').onclick=addCurrent;
+  }catch(e){$('#dialogBody').innerHTML='<div class="empty">'+esc(e.message)+'</div>';}
+}
+async function addCurrent(){
+  const variant=$('#variant').value,condition=$('#condition').value,language=$('#language').value;
+  const qty=Math.max(1,parseInt($('#qty').value||'1',10)),p=pokemonPrice(currentCard,variant);
+  const old=items.find(x=>x.game==='pokemon'&&x.cardId===currentCard.id&&x.variant===variant&&x.condition===condition&&x.language===language);
+  const now=new Date().toISOString();
+  const paid=$('#pricePaid').value===''?(old?.pricePaid??null):Number($('#pricePaid').value);
+  const x={game:'pokemon',cardId:currentCard.id,name:currentCard.name,localId:String(currentCard.localId),setId:currentCard.set?.id||'',setName:currentCard.set?.name||'',rarity:currentCard.rarity||'',variant,condition,language,quantity:(old?old.quantity:0)+qty,image:currentCard.image||'',price:p.value==null?null:Number(p.value),pricePaid:paid,priceCurrency:p.currency,priceSource:p.label,priceUpdatedAt:now,entrySource:'provider',notes:old?.notes||'',addedAt:old?.addedAt||now};
+  let q;
+  if(old)q=await sb.from('collection_items').update(toRow(x)).eq('id',old.id).select().single();
+  else q=await sb.from('collection_items').insert({...toRow(x),added_at:now}).select().single();
+  if(q.error)return toast('Could not save card');
+  const folderId=$('#addFolder').value;
+  if(folderId){
+    await sb.from('collection_folder_items').upsert({folder_id:folderId,collection_item_id:q.data.id},{onConflict:'folder_id,collection_item_id'});
+  }
+  $('#cardDialog').close();
+  await loadCollection();await loadFolders();renderDashboard();renderLibrary();toast(currentCard.name+' saved');
+}
 function rowFor(x,compact){const e=document.createElement('div');e.className='cardrow';const total=(Number(x.price)||0)*(Number(x.quantity)||0);e.innerHTML='<img loading="lazy" src="'+esc(imageUrl(x.image))+'"><div class="cardmain"><div class="cardtitle">'+esc(x.name)+'</div><div class="cardmeta">'+esc(x.setName)+' • #'+esc(x.localId)+' • '+esc(x.variant)+' • '+esc(x.condition)+'</div>'+(compact?'':'<div class="qty"><button data-a="dec">−</button><span>'+x.quantity+'</span><button data-a="inc">+</button><button data-a="del">×</button></div>')+'</div><div class="cardprice">'+money(total,x.priceCurrency||'USD')+'<div class="cardmeta">×'+x.quantity+'</div></div>';if(!compact){e.querySelector('[data-a="inc"]').onclick=()=>adjust(x,1);e.querySelector('[data-a="dec"]').onclick=()=>adjust(x,-1);e.querySelector('[data-a="del"]').onclick=()=>removeEntry(x);}return e;}
 async function adjust(x,d){const q=x.quantity+d;if(q<=0)return removeEntry(x);const {error}=await sb.from('collection_items').update({quantity:q,updated_at:new Date().toISOString()}).eq('id',x.id);if(error)return toast('Could not update quantity');await loadCollection();renderLibrary();renderDashboard();}
-async function removeEntry(x){if(!confirm('Remove '+x.name+' from this collection?'))return;const {error}=await sb.from('collection_items').delete().eq('id',x.id);if(error)return toast('Could not remove card');await loadCollection();renderLibrary();renderDashboard();}
+async function removeEntry(x){if(!confirm('Remove '+x.name+' from this collection?'))return;const {error}=await sb.from('collection_items').delete().eq('id',x.id);if(error)return toast('Could not remove card');await loadCollection();await loadFolders();renderLibrary();renderDashboard();}
 function renderDashboard(){const count=items.reduce((s,x)=>s+Number(x.quantity||0),0),total=items.reduce((s,x)=>s+((x.priceCurrency==='USD'||!x.priceCurrency)?Number(x.price||0)*Number(x.quantity||0):0),0);$('#collectionValue').textContent=money(total);$('#totalCards').textContent=count.toLocaleString();$('#uniqueCards').textContent=items.length.toLocaleString();$('#duplicates').textContent=Math.max(0,count-items.length).toLocaleString();$('#setCount').textContent=new Set(items.map(x=>x.game+':'+x.setId).filter(Boolean)).size.toLocaleString();const r=[...items].sort((a,b)=>new Date(b.addedAt)-new Date(a.addedAt)).slice(0,5),b=$('#recent');b.innerHTML='';if(!r.length){b.className='panel empty';b.textContent='No cards yet.';}else{b.className='panel';r.forEach(x=>b.appendChild(rowFor(x,true)));}}
-function renderLibrary(){let a=[...items],q=$('#librarySearch').value.trim().toLowerCase(),s=$('#librarySort').value;if(q)a=a.filter(x=>[x.name,x.setName,x.localId,x.variant,x.condition].some(v=>String(v||'').toLowerCase().includes(q)));a.sort((x,y)=>s==='name'?x.name.localeCompare(y.name):s==='set'?(x.setName||'').localeCompare(y.setName||'')||x.name.localeCompare(y.name):s==='value'?Number(y.price||0)*y.quantity-Number(x.price||0)*x.quantity:s==='quantity'?y.quantity-x.quantity:new Date(y.addedAt)-new Date(x.addedAt));const b=$('#libraryList');b.innerHTML='';if(!a.length)b.innerHTML='<div class="empty">No cards match this view.</div>';else a.forEach(x=>b.appendChild(rowFor(x,false)));}
-async function refreshPrices(){if(!items.length)return toast('No cards to refresh');const btn=$('#refreshPrices');btn.disabled=true;btn.textContent='Refreshing…';for(const id of [...new Set(items.filter(x=>x.game==='pokemon').map(x=>x.cardId))].slice(0,50)){try{const c=await pokemonCard(id);for(const x of items.filter(i=>i.cardId===id)){const p=pokemonPrice(c,x.variant);await sb.from('collection_items').update({price:p.value==null?null:Number(p.value),price_currency:p.currency,price_source:p.label,price_updated_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',x.id);}}catch(e){console.warn(e);}}await loadCollection();btn.disabled=false;btn.textContent='Refresh prices';renderLibrary();renderDashboard();toast('Prices refreshed');}
+
+function libraryCardFor(x){
+  const e=document.createElement('article');e.className='librarycard';
+  const total=Number(x.price||0)*Number(x.quantity||0);
+  const img=x.image?'<img loading="lazy" src="'+esc(imageUrl(x.image))+'" alt="'+esc(x.name)+'">':'<div class="librarycardplaceholder">DV</div>';
+  e.innerHTML='<div class="librarycardimage">'+img+'<span class="qtybadge">×'+x.quantity+'</span></div><div class="librarycardbody"><strong>'+esc(x.name)+'</strong><span>'+esc(x.setName||'No set')+(x.localId?' • #'+esc(x.localId):'')+'</span><span>'+esc(x.variant)+' • '+esc(x.condition)+'</span><div class="libraryprices"><div><small>Value</small><b>'+money(total,x.priceCurrency||'USD')+'</b></div><div><small>Paid ea.</small><b>'+money(x.pricePaid,'USD')+'</b></div></div><div class="librarycardactions"><button class="secondary" data-folders>Folders</button><button data-dec>−</button><button data-inc>＋</button></div></div>';
+  e.querySelector('[data-folders]').onclick=()=>openFolderAssignments(x);
+  e.querySelector('[data-inc]').onclick=()=>adjust(x,1);
+  e.querySelector('[data-dec]').onclick=()=>adjust(x,-1);
+  return e;
+}
+function renderLibrary(){
+  let a=folderItems(activeFolderId);
+  const q=$('#librarySearch').value.trim().toLowerCase(),sort=$('#librarySort').value;
+  if(q)a=a.filter(x=>[x.name,x.setName,x.localId,x.variant,x.condition].some(v=>String(v||'').toLowerCase().includes(q)));
+  a.sort((x,y)=>{
+    if(sort==='name_asc')return x.name.localeCompare(y.name);
+    if(sort==='name_desc')return y.name.localeCompare(x.name);
+    if(sort==='value_desc')return Number(y.price||0)*y.quantity-Number(x.price||0)*x.quantity;
+    if(sort==='value_asc')return Number(x.price||0)*x.quantity-Number(y.price||0)*y.quantity;
+    if(sort==='paid_desc')return Number(y.pricePaid??-1)-Number(x.pricePaid??-1);
+    if(sort==='paid_asc')return Number(x.pricePaid??Number.MAX_SAFE_INTEGER)-Number(y.pricePaid??Number.MAX_SAFE_INTEGER);
+    return new Date(y.addedAt)-new Date(x.addedAt);
+  });
+  const fullRows=folderItems(activeFolderId);
+  const folder=folders.find(f=>f.id===activeFolderId);
+  $('#libraryTitle').textContent=folder?folder.name:'Main Library';
+  $('#libraryValue').textContent=money(collectionValue(fullRows));
+  $('#libraryValueLabel').textContent=(folder?folder.name:'Entire collection')+' • '+fullRows.reduce((n,x)=>n+Number(x.quantity||0),0)+' cards';
+  const box=$('#libraryList');box.innerHTML='';
+  if(!a.length)box.innerHTML='<div class="empty">No cards match this view.</div>';
+  else a.forEach(x=>box.appendChild(libraryCardFor(x)));
+}
+async function refreshPrices(){if(!items.length)return toast('No cards to refresh');const btn=$('#refreshPrices');btn.disabled=true;btn.textContent='Refreshing…';for(const id of [...new Set(items.filter(x=>x.game==='pokemon'&&x.entrySource!=='manual'&&!String(x.cardId).startsWith('manual:')).map(x=>x.cardId))].slice(0,50)){try{const c=await pokemonCard(id);for(const x of items.filter(i=>i.cardId===id)){const p=pokemonPrice(c,x.variant);await sb.from('collection_items').update({price:p.value==null?null:Number(p.value),price_currency:p.currency,price_source:p.label,price_updated_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',x.id);}}catch(e){console.warn(e);}}await loadCollection();btn.disabled=false;btn.textContent='Refresh prices';renderLibrary();renderDashboard();toast('Prices refreshed');}
 async function startCamera(){try{if(stream)stream.getTracks().forEach(t=>t.stop());stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});$('#video').srcObject=stream;$('#cameraPlaceholder').classList.add('hidden');$('#video').classList.remove('hidden');$('#capturePreview').classList.add('hidden');$('#captureCard').disabled=false;$('#cameraStatus').textContent='Camera ready';}catch(e){$('#cameraStatus').textContent='Camera blocked';alert('Camera access failed. '+e.message);}}
 function capture(){const v=$('#video');if(!v.videoWidth)return;const c=$('#canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0,c.width,c.height);$('#capturePreview').src=c.toDataURL('image/jpeg',.9);$('#capturePreview').classList.remove('hidden');v.classList.add('hidden');$('#captureCard').classList.add('hidden');$('#retake').classList.remove('hidden');$('#cameraStatus').textContent='Captured';}
 function retake(){$('#capturePreview').classList.add('hidden');$('#video').classList.remove('hidden');$('#captureCard').classList.remove('hidden');$('#retake').classList.add('hidden');$('#cameraStatus').textContent='Camera ready';}
 function download(content,type,name){const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 const csv=v=>{const s=String(v??'');return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
 async function exportJson(){download(JSON.stringify({format:'deckvault-backup',version:2,exportedAt:new Date().toISOString(),collection:items},null,2),'application/json','deckvault-backup-'+new Date().toISOString().slice(0,10)+'.json');}
-async function exportCsv(collectr){const cols=collectr?['Game','Card Name','Set','Card Number','Variant','Condition','Language','Quantity','Provider ID','Current Price','Currency']:['Game','Name','Set','Set ID','Card Number','Variant','Condition','Language','Quantity','Rarity','Provider ID','Price','Currency','Price Source','Added At','Updated At','Notes'];const rows=items.map(x=>collectr?[x.game,x.name,x.setName,x.localId,x.variant,x.condition,x.language,x.quantity,x.cardId,x.price||'',x.priceCurrency||'']:[x.game,x.name,x.setName,x.setId,x.localId,x.variant,x.condition,x.language,x.quantity,x.rarity,x.cardId,x.price||'',x.priceCurrency||'',x.priceSource||'',x.addedAt,x.updatedAt,x.notes||'']);download([cols,...rows].map(r=>r.map(csv).join(',')).join('\n'),'text/csv;charset=utf-8',(collectr?'deckvault-collectr-transfer-':'deckvault-collection-')+new Date().toISOString().slice(0,10)+'.csv');}
-async function importBackup(file){const d=JSON.parse(await file.text());if(!d||!Array.isArray(d.collection))throw new Error('Not a valid DeckVault backup.');if(!confirm('Restore '+d.collection.length+' entries to this account?'))return;for(const x of d.collection){const cardId=x.cardId||x.card_id;if(!cardId)continue;const variant=x.variant||'Normal',condition=x.condition||'Near Mint',language=x.language||'English';const old=items.find(i=>i.game===(x.game||'pokemon')&&i.cardId===cardId&&i.variant===variant&&i.condition===condition&&i.language===language);const obj={game:x.game||'pokemon',cardId,name:x.name||'',localId:x.localId||x.local_id||'',setId:x.setId||x.set_id||'',setName:x.setName||x.set_name||'',rarity:x.rarity||'',variant,condition,language,quantity:Number(x.quantity||1),image:x.image||x.image_url||'',price:x.price==null?null:Number(x.price),priceCurrency:x.priceCurrency||x.price_currency||'USD',priceSource:x.priceSource||x.price_source||'',priceUpdatedAt:x.priceUpdatedAt||x.price_updated_at||null,notes:x.notes||'',addedAt:x.addedAt||x.added_at||new Date().toISOString()};if(old)await sb.from('collection_items').update(toRow({...obj,id:old.id})).eq('id',old.id);else await sb.from('collection_items').insert({...toRow(obj),added_at:obj.addedAt});}await loadCollection();renderDashboard();renderLibrary();toast('Backup restored');}
+async function exportCsv(collectr){const cols=collectr?['Game','Card Name','Set','Card Number','Variant','Condition','Language','Quantity','Provider ID','Current Price','Currency']:['Game','Name','Set','Set ID','Card Number','Variant','Condition','Language','Quantity','Rarity','Provider ID','Price','Price Paid','Currency','Price Source','Added At','Updated At','Notes'];const rows=items.map(x=>collectr?[x.game,x.name,x.setName,x.localId,x.variant,x.condition,x.language,x.quantity,x.cardId,x.price||'',x.priceCurrency||'']:[x.game,x.name,x.setName,x.setId,x.localId,x.variant,x.condition,x.language,x.quantity,x.rarity,x.cardId,x.price||'',x.pricePaid??'',x.priceCurrency||'',x.priceSource||'',x.addedAt,x.updatedAt,x.notes||'']);download([cols,...rows].map(r=>r.map(csv).join(',')).join('\n'),'text/csv;charset=utf-8',(collectr?'deckvault-collectr-transfer-':'deckvault-collection-')+new Date().toISOString().slice(0,10)+'.csv');}
+async function importBackup(file){const d=JSON.parse(await file.text());if(!d||!Array.isArray(d.collection))throw new Error('Not a valid DeckVault backup.');if(!confirm('Restore '+d.collection.length+' entries to this account?'))return;for(const x of d.collection){const cardId=x.cardId||x.card_id;if(!cardId)continue;const variant=x.variant||'Normal',condition=x.condition||'Near Mint',language=x.language||'English';const old=items.find(i=>i.game===(x.game||'pokemon')&&i.cardId===cardId&&i.variant===variant&&i.condition===condition&&i.language===language);const obj={game:x.game||'pokemon',cardId,name:x.name||'',localId:x.localId||x.local_id||'',setId:x.setId||x.set_id||'',setName:x.setName||x.set_name||'',rarity:x.rarity||'',variant,condition,language,quantity:Number(x.quantity||1),image:x.image||x.image_url||'',price:x.price==null?null:Number(x.price),pricePaid:(x.pricePaid??x.price_paid)==null?null:Number(x.pricePaid??x.price_paid),priceCurrency:x.priceCurrency||x.price_currency||'USD',priceSource:x.priceSource||x.price_source||'',priceUpdatedAt:x.priceUpdatedAt||x.price_updated_at||null,entrySource:x.entrySource||x.entry_source||'provider',notes:x.notes||'',addedAt:x.addedAt||x.added_at||new Date().toISOString()};if(old)await sb.from('collection_items').update(toRow({...obj,id:old.id})).eq('id',old.id);else await sb.from('collection_items').insert({...toRow(obj),added_at:obj.addedAt});}await loadCollection();renderDashboard();renderLibrary();toast('Backup restored');}
 
 async function init(){
   $$('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
@@ -179,7 +387,7 @@ async function init(){
   $('#acceptTermsCheck').onchange=e=>{$('#acceptTermsBtn').disabled=!e.target.checked;};
   $('#acceptTermsBtn').onclick=acceptCurrentTerms;
   $('#searchBtn').onclick=search;$('#searchName').onkeydown=e=>{if(e.key==='Enter')search();};$('#searchNumber').onkeydown=e=>{if(e.key==='Enter')search();};
-  $('#librarySearch').oninput=renderLibrary;$('#librarySort').onchange=renderLibrary;$('#refreshPrices').onclick=refreshPrices;$('#startCamera').onclick=startCamera;$('#captureCard').onclick=capture;$('#retake').onclick=retake;
+  $('#librarySearch').oninput=renderLibrary;$('#librarySort').onchange=renderLibrary;$('#refreshPrices').onclick=refreshPrices;$('#manualAddCardBtn').onclick=openManualCard;$('#saveManualCardBtn').onclick=saveManualCard;$('#newFolderBtn').onclick=createFolder;$('#manageFoldersBtn').onclick=()=>{renderFolderManager();$('#manageFoldersDialog').showModal();};$('#saveFolderAssignmentsBtn').onclick=saveFolderAssignments;$('#startCamera').onclick=startCamera;$('#captureCard').onclick=capture;$('#retake').onclick=retake;
   $('#exportJson').onclick=exportJson;$('#exportCsv').onclick=()=>exportCsv(false);$('#exportCollectr').onclick=()=>exportCsv(true);$('#importJson').onchange=async e=>{if(e.target.files[0])try{await importBackup(e.target.files[0]);}catch(err){alert(err.message);}e.target.value='';};
   $('#clearData').onclick=async()=>{if(confirm('Delete every card in your DeckVault account collection?')){const {error}=await sb.from('collection_items').delete().eq('user_id',currentUser.id);if(error)return toast('Could not clear collection');await loadCollection();renderDashboard();renderLibrary();toast('Collection cleared');}};
   $('#priceSource').value=pricePref();$('#priceSource').onchange=e=>{localStorage.setItem('deckvault-price-source',e.target.value);toast('Price source saved');};
