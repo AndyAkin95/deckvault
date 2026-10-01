@@ -120,7 +120,8 @@ const MOCK_SUPABASE = String.raw`
     if(table==='notifications') return terminal==='single'||terminal==='maybeSingle'?{data:notification,error:null}:{data:[notification],error:null};
     if(table==='card_watchlist') return terminal==='single'||terminal==='maybeSingle'?{data:watch,error:null}:{data:[watch],error:null};
     if(table==='collection_copies') return terminal==='single'||terminal==='maybeSingle'?{data:copies[0],error:null}:{data:copies,error:null};
-    if(table==='user_blocks'||table==='user_reports'||table==='user_favorites') return {data:[],error:null};
+    if(table==='user_blocks'||table==='user_reports') return {data:[],error:null};
+    if(table==='user_favorites') return terminal==='single'||terminal==='maybeSingle'?{data:null,error:null}:{data:[],error:null};
     if(table==='profile_details') return {data:[],error:null};
     if(table==='admin_users') return terminal==='single'||terminal==='maybeSingle'?{data:null,error:null}:{data:[],error:null};
     if(table==='collection_lists') return terminal==='single'||terminal==='maybeSingle'?{data:tradeList,error:null}:{data:[tradeList],error:null};
