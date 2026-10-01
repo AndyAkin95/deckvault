@@ -857,10 +857,10 @@ document.addEventListener('DOMContentLoaded',()=>{
       setTimeout(()=>$('#onboardingGate').classList.add('hidden'),0);
       return;
     }
-    if(session?.user){
+    if(session?.user&&navigator.onLine&&!document.body.classList.contains('offline-mode')){
       setTimeout(()=>refreshSocialState().catch(console.error),0);
     }
   });
-  setTimeout(()=>{if(currentUser){refreshSocialState();startCommunityRealtime();}},250);
+  setTimeout(()=>{if(currentUser&&navigator.onLine&&!document.body.classList.contains('offline-mode')){refreshSocialState();startCommunityRealtime();}},250);
 });
 window.refreshSocialState=refreshSocialState;
