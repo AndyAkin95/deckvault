@@ -64,6 +64,20 @@ const MOCK_SUPABASE = String.raw`
     avatar_url:null,onboarding_complete:true,marketplace_mode:'off',marketplace_note:null,
     master_sets_visibility:'public',created_at:now,updated_at:now
   };
+  const otherProfile={
+    id:'55555555-5555-4555-8555-555555555555',username:'othercollector',display_name:'Other Collector',
+    bio:'Messaging test collector',avatar_url:null,onboarding_complete:true,marketplace_mode:'trade',
+    marketplace_note:null,master_sets_visibility:'public',created_at:now,updated_at:now
+  };
+  const privateConversation={
+    id:'66666666-6666-4666-8666-666666666666',
+    user_one:user.id,user_two:otherProfile.id,created_at:now
+  };
+  const privateMessage={
+    id:'77777777-7777-4777-8777-777777777777',
+    conversation_id:privateConversation.id,sender_id:otherProfile.id,
+    body:'Hello from the messaging VM test',created_at:now
+  };
   const card={
     id:'22222222-2222-4222-8222-222222222222',user_id:user.id,game:'pokemon',card_id:'sv3-125',
     name:'Pikachu',local_id:'125',set_id:'sv3',set_name:'Obsidian Flames',rarity:'Common',
@@ -82,7 +96,10 @@ const MOCK_SUPABASE = String.raw`
     if(table==='collection_items') return terminal==='single'||terminal==='maybeSingle'?{data:card,error:null}:{data:[card],error:null};
     if(table==='collection_folders') return terminal==='single'||terminal==='maybeSingle'?{data:folder,error:null}:{data:[folder],error:null};
     if(table==='collection_folder_items') return {data:[{folder_id:folder.id,collection_item_id:card.id}],error:null};
-    if(table==='profiles') return terminal==='single'||terminal==='maybeSingle'?{data:profile,error:null}:{data:[profile],error:null};
+    if(table==='profiles') return terminal==='single'||terminal==='maybeSingle'?{data:profile,error:null}:{data:[profile,otherProfile],error:null};
+    if(table==='private_conversations') return terminal==='single'||terminal==='maybeSingle'?{data:privateConversation,error:null}:{data:[privateConversation],error:null};
+    if(table==='private_messages') return terminal==='single'||terminal==='maybeSingle'?{data:privateMessage,error:null}:{data:[privateMessage],error:null};
+    if(table==='private_conversation_reads') return {data:[],error:null};
     if(table==='profile_details') return {data:[],error:null};
     if(table==='admin_users') return terminal==='single'||terminal==='maybeSingle'?{data:null,error:null}:{data:[],error:null};
     if(table==='collection_lists') return terminal==='single'||terminal==='maybeSingle'?{data:tradeList,error:null}:{data:[tradeList],error:null};
@@ -287,11 +304,21 @@ async function signedInPass(browser, pass) {
 
   // Community sub-tabs.
   await page.click('.bottomnav [data-go="community"]');
-  for(const tab of ['forums','profiles','chat']){
+  for(const tab of ['forums','profiles','messages','chat']){
     await page.click('[data-community-tab="'+tab+'"]');
-    await page.waitForTimeout(100);
-    const paneId=tab==='chat'?'communityChatPane':tab==='forums'?'communityForumsPane':'communityProfilesPane';
+    await page.waitForTimeout(150);
+    const paneId=tab==='chat'?'communityChatPane':tab==='forums'?'communityForumsPane':tab==='messages'?'communityMessagesPane':'communityProfilesPane';
     assert(await page.locator('#'+paneId).evaluate(el=>el.classList.contains('active')), 'Community pane failed: '+tab);
+    if(tab==='messages'){
+      const conversation=page.locator('.conversationrow').first();
+      assert(await conversation.count()===1,'Private message inbox did not render a conversation');
+      await conversation.click();
+      await page.waitForSelector('#privateConversationView:not(.hidden)');
+      assert((await page.locator('#privateMessageThread').innerText()).includes('Hello from the messaging VM test'),'Private message thread did not render');
+      await page.fill('#privateMessageInput','VM reply');
+      await page.click('#privateMessageForm button[type="submit"]');
+      await page.waitForTimeout(120);
+    }
   }
 
   // Library controls and card details.
@@ -313,8 +340,15 @@ async function signedInPass(browser, pass) {
   await page.waitForSelector('#manageFoldersDialog[open]');
   await page.locator('#manageFoldersDialog .close').click();
 
-  // Settings diagnostics should render without throwing.
+  // Settings dropdown should show one focused pane at a time; admin must not appear for a non-admin.
   await page.click('.bottomnav [data-go="settings"]');
+  assert(await page.locator('#settingsSectionSelect option[value="admin"]').count()===0,'Administrator settings appeared for non-admin');
+  for(const section of ['profile','marketplace','lists','valuation','backup','diagnostics','data','account']){
+    await page.selectOption('#settingsSectionSelect',section);
+    await page.waitForTimeout(80);
+    assert(await page.locator('[data-settings-pane="'+section+'"]').evaluate(el=>el.classList.contains('active')),'Settings pane did not activate: '+section);
+  }
+  await page.selectOption('#settingsSectionSelect','diagnostics');
   await page.click('#refreshErrorLog');
   await page.waitForTimeout(150);
 
