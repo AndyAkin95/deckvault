@@ -30,7 +30,7 @@ async function showApp(user){
 }
 async function loadCollection(){
   if(!currentUser){items=[];return;}
-  const {data,error}=await sb.from('collection_items').select('*').order('added_at',{ascending:false});
+  const {data,error}=await sb.from('collection_items').select('*').eq('user_id',currentUser.id).order('added_at',{ascending:false});
   if(error){console.error(error);toast('Could not load collection');return;}
   items=(data||[]).map(fromRow);
 }
