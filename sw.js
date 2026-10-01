@@ -1,5 +1,5 @@
-const CACHE='deckvault-v18-static';
-const CORE=['./','./index.html','./styles.css','./app.js','./social.js','./manifest.json','./icon.svg','https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js'];
+const CACHE='deckvault-v19-static';
+const CORE=['./','./index.html','./styles.css','./app.js','./social.js','./manifest.json','./icon.svg'];
 
 self.addEventListener('install',event=>{
   event.waitUntil(
