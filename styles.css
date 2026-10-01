@@ -141,3 +141,22 @@ textarea{font:inherit;resize:vertical;min-height:86px}
 .profilemaster{margin:20px 0}.mastersettools{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin-bottom:10px}.mastersettools input{width:100%;border:1px solid #334155;background:#0c1423;color:#fff;border-radius:12px;padding:11px}.mastersetgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:9px;max-height:520px;overflow:auto;padding-right:2px}.mastersettile{display:grid;grid-template-columns:68px 1fr;gap:9px;align-items:center;text-align:left;border:1px solid var(--line);background:#111b2d;color:#fff;border-radius:14px;padding:9px}.mastersettile img,.setlogofallback{width:68px;height:48px;object-fit:contain;display:grid;place-items:center;font-size:.65rem;color:var(--muted)}.mastersettile strong,.mastersettile span{display:block}.mastersettile strong{font-size:.78rem}.mastersettile span{font-size:.66rem;color:var(--muted);margin-top:3px}.setprogress{height:5px;background:#253349;border-radius:999px;overflow:hidden;margin-top:6px}.setprogress i{display:block;height:100%;background:var(--accent)}
 .mastersethead{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start;margin-bottom:12px}.mastersethead h3{margin:2px 0}.mastersethead span{font-size:.72rem;color:var(--muted)}.mastercardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:9px}.mastercard{border:1px solid var(--line);background:#0f1929;color:#fff;border-radius:13px;padding:7px;text-align:left;transition:.15s}.mastercard:disabled{cursor:default}.mastercardimg{position:relative;aspect-ratio:2.5/3.5;background:#09111d;border-radius:8px;overflow:hidden}.mastercardimg img{width:100%;height:100%;object-fit:contain}.mastercard strong,.mastercard>span{display:block}.mastercard strong{font-size:.7rem;margin-top:6px}.mastercard>span{font-size:.62rem;color:var(--muted);margin-top:2px}.mastercard.missing{opacity:.38;filter:saturate(.35)}.mastercard.owned{opacity:1;border-color:#4c7a58}.mastercheck{display:none;position:absolute;right:5px;top:5px;width:24px;height:24px;border-radius:50%;background:#22c55e;color:#07130b;place-items:center;font-weight:950}.mastercard.owned .mastercheck{display:grid}
 @media(max-width:520px){.mastersetgrid{grid-template-columns:1fr 1fr}.mastersettile{grid-template-columns:48px 1fr}.mastersettile img,.setlogofallback{width:48px}.mastercardgrid{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.mastercard{padding:5px}.mastercard strong{font-size:.62rem}}
+
+/* Larger bottom tabs + offline mode */
+.bottomnav{padding-top:10px;min-height:72px}
+.bottomnav button{min-height:52px;padding:6px 2px;font-size:1.34rem;gap:3px}
+.bottomnav small{font-size:.61rem;font-weight:750}
+.bottomnav .scan{width:62px;height:62px;margin-top:-20px;font-size:1.55rem}
+.bottomnav .scan small{font-size:.64rem}
+.bottomnav button:disabled{opacity:.34;filter:saturate(.35);pointer-events:none}
+.offlinebanner{position:sticky;z-index:25;top:0;display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;padding:7px 12px;background:#172554;border-bottom:1px solid #3b82f6;color:#dbeafe;font-size:.72rem;text-align:center}
+.offlinebanner strong{color:#93c5fd}.offlinebanner small{color:#a8b9d6}
+.offline-mode #refreshPrices,.offline-mode #manualAddCardBtn,.offline-mode #newFolderBtn,.offline-mode #manageFoldersBtn,.offline-mode .librarycardactions{opacity:.45}
+.offline-mode .librarycardactions button{pointer-events:none}
+@media(max-width:560px){
+  .bottomnav{min-height:74px;padding-top:9px}
+  .bottomnav button{min-height:53px;font-size:1.18rem;padding:5px 1px}
+  .bottomnav small{font-size:.56rem}
+  .bottomnav .scan{width:58px;height:58px;margin-top:-18px;font-size:1.45rem}
+  .bottomnav .scan small{font-size:.58rem}
+}
