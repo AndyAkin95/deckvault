@@ -1042,6 +1042,11 @@ window.addEventListener('unhandledrejection',e=>{
   showStartupError(err,true);
 });
 async function init(){
+  // Dialog close/cancel controls must never be blocked by required-field validation.
+  $('dialog .close, dialog button[value="cancel"]').forEach(button=>{
+    button.type='button';
+    button.onclick=()=>button.closest('dialog')?.close('cancel');
+  });
   $('#startupReloadBtn').onclick=()=>location.reload();
   $('#refreshErrorLog').onclick=()=>loadErrorBacklog().catch(e=>console.error(e));
   $('#copyDiagnostics').onclick=copyDiagnostics;
