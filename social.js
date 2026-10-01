@@ -444,7 +444,7 @@ async function profileMapFor(userIds){
   return Object.fromEntries((data||[]).map(p=>[p.id,p]));
 }
 function switchCommunityTab(tab){
-  $('[data-community-tab]').forEach(b=>b.classList.toggle('active',b.dataset.communityTab===tab));
+  $$('[data-community-tab]').forEach(b=>b.classList.toggle('active',b.dataset.communityTab===tab));
   $('#communityChatPane').classList.toggle('active',tab==='chat');
   $('#communityForumsPane').classList.toggle('active',tab==='forums');
   $('#communityProfilesPane').classList.toggle('active',tab==='profiles');
@@ -826,7 +826,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   $('#saveProfileDetailsBtn').onclick=saveProfileDetails;
   $('#createListBtn').onclick=createList;
   $('#communitySearchBtn').onclick=searchCommunity;
-  $('[data-community-tab]').forEach(b=>b.onclick=()=>switchCommunityTab(b.dataset.communityTab));
+  $$('[data-community-tab]').forEach(b=>b.onclick=()=>switchCommunityTab(b.dataset.communityTab));
   $('#communityChatForm').onsubmit=sendCommunityMessage;
   $('#refreshChatBtn').onclick=loadCommunityChat;
   $('#newForumThreadBtn').onclick=()=>{$('#newForumThreadDialog').showModal();};
