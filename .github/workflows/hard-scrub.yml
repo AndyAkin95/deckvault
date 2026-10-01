@@ -1,0 +1,48 @@
+name: DeckVault Hard Scrub
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'app.js'
+      - 'social.js'
+      - 'styles.css'
+      - 'sw.js'
+      - 'tests/**'
+      - '.github/workflows/hard-scrub.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  hard-scrub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax checks
+        run: |
+          node --check app.js
+          node --check social.js
+          node --check sw.js
+      - name: Install browser test dependency
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Start local DeckVault server
+        run: |
+          python3 -m http.server 4173 --bind 127.0.0.1 > /tmp/deckvault-http.log 2>&1 &
+          echo $! > /tmp/deckvault-http.pid
+          sleep 2
+      - name: Run hard scrub twice per state
+        env:
+          DECKVAULT_TEST_URL: http://127.0.0.1:4173
+        run: node tests/hard-scrub.mjs
+      - name: Show local server log on failure
+        if: failure()
+        run: cat /tmp/deckvault-http.log || true
