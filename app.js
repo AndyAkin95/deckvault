@@ -31,7 +31,7 @@ const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{
 let currentUser=null, currentCard=null, stream=null, installPrompt=null, items=[];
 let offlineMode=false,offlineSnapshotAt=null;
 const OFFLINE_CACHE_VERSION=1;
-const APP_BUILD='v23';
+const APP_BUILD='v24';
 const ERROR_BACKLOG_KEY='deckvault-error-backlog-v1';
 const LAST_USER_KEY='deckvault-last-user-id';
 let errorLogSyncing=false,errorLogInternal=false,errorBreadcrumbs=[];
