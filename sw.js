@@ -21,6 +21,29 @@ self.addEventListener('activate',event=>{
   );
 });
 
+self.addEventListener('message',event=>{
+  const data=event.data||{};
+  if(data.type!=='CACHE_URLS'||!Array.isArray(data.urls))return;
+  const urls=data.urls.slice(0,300).filter(u=>{
+    try{
+      const x=new URL(u);
+      return x.hostname==='assets.tcgdex.net'||x.origin===self.location.origin;
+    }catch{return false;}
+  });
+  event.waitUntil(
+    caches.open(CACHE).then(async cache=>{
+      for(const url of urls){
+        try{
+          const hit=await cache.match(url);
+          if(hit)continue;
+          const response=await fetch(url);
+          if(response.ok||response.type==='opaque')await cache.put(url,response.clone());
+        }catch{}
+      }
+    })
+  );
+});
+
 self.addEventListener('fetch',event=>{
   if(event.request.method!=='GET')return;
   const url=new URL(event.request.url);
