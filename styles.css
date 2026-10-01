@@ -108,3 +108,26 @@ textarea{font:inherit;resize:vertical;min-height:86px}
 .pricehistoryhead{display:flex;align-items:end;justify-content:space-between;gap:10px}.pricehistoryhead select{max-width:210px;background:#0b1220;border:1px solid #334155;color:#fff;border-radius:10px;padding:8px}.historyranges{display:flex;gap:5px;overflow-x:auto;padding:8px 0;scrollbar-width:none}.historyranges::-webkit-scrollbar{display:none}.historyrange{white-space:nowrap;border:1px solid #34445d;background:#111b2d;color:#aebbd0;border-radius:999px;padding:6px 9px;font-size:.65rem;font-weight:850}.historyrange.active{background:var(--accent);color:#101827;border-color:var(--accent)}
 .pricehistorychart{min-height:220px;border:1px solid #253750;background:#09111d;border-radius:14px;padding:8px;overflow:hidden}.pricehistorychart svg{display:block;width:100%;height:auto;min-height:210px}.chartgrid{stroke:#23334b;stroke-width:1}.chartline{stroke:#f6c344;stroke-width:3;stroke-linejoin:round;stroke-linecap:round}.chartdot{fill:#f6c344;stroke:#111827;stroke-width:1.5}.chartlabel{fill:#8291a8;font-size:10px}.historyempty{min-height:200px;display:grid;place-items:center;color:var(--muted);text-align:center;padding:20px}.historysummary{font-size:.7rem;color:var(--muted);margin-top:7px}
 @media(max-width:520px){.pricehistoryhead{align-items:stretch;flex-direction:column}.pricehistoryhead select{max-width:none;width:100%}.providervaluegrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Primary center scan action */
+.bottomnav .scan{
+  width:58px;
+  height:58px;
+  justify-self:center;
+  align-self:start;
+  margin-top:-18px;
+  padding:7px 4px;
+  border-radius:18px;
+  background:#22d3ee;
+  color:#07131c;
+  font-size:1.45rem;
+  font-weight:950;
+  box-shadow:0 8px 24px rgba(34,211,238,.35),0 0 0 3px rgba(8,14,25,.96);
+}
+.bottomnav .scan small{color:#07131c;font-size:.62rem;font-weight:950}
+.bottomnav .scan.active{color:#07131c;background:#67e8f9}
+.bottomnav .scan:active{transform:scale(.96)}
+@media(max-width:560px){
+  .bottomnav .scan{width:54px;height:54px;margin-top:-16px;font-size:1.35rem;border-radius:17px}
+  .bottomnav .scan small{font-size:.56rem}
+}
