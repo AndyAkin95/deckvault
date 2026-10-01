@@ -568,8 +568,13 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('[data-go="community"]').forEach(b=>b.addEventListener('click',searchCommunity));
   document.querySelectorAll('[data-go="settings"]').forEach(b=>b.addEventListener('click',()=>{loadProfileSettings();loadMyLists();loadTradeList();if(isAdmin)Promise.all([checkAdminMfa(),loadApplications(),loadUserManagement(),loadAdminAudit()]);}));
   sb.auth.onAuthStateChange((event,session)=>{
-    if(event==='SIGNED_OUT'){$('#onboardingGate').classList.add('hidden');return;}
-    if(session?.user)setTimeout(refreshSocialState,50);
+    if(event==='SIGNED_OUT'){
+      setTimeout(()=>$('#onboardingGate').classList.add('hidden'),0);
+      return;
+    }
+    if(session?.user){
+      setTimeout(()=>refreshSocialState().catch(console.error),0);
+    }
   });
   setTimeout(()=>{if(currentUser)refreshSocialState();},250);
 });
