@@ -10,7 +10,7 @@
   <title>DeckVault</title>
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=20">
+  <link rel="stylesheet" href="styles.css?v=21">
 </head>
 <body>
 <section id="authGate" class="authgate">
@@ -390,6 +390,19 @@
       </label>
     </div>
     <div class="panel">
+      <div class="pagehead">
+        <div><div class="eyebrow">DIAGNOSTICS</div><h3>Error Backlog</h3></div>
+        <button id="refreshErrorLog" class="ghost" type="button">Refresh</button>
+      </div>
+      <p class="muted">DeckVault saves crashes and runtime errors locally first, then syncs them to your account when online. Passwords, auth tokens, and likely secrets are redacted before storage.</p>
+      <div id="errorLogStatus" class="status">No diagnostics loaded yet.</div>
+      <div id="errorLogList" class="errorloglist"></div>
+      <div class="stack">
+        <button id="copyDiagnostics" class="secondary" type="button">Copy diagnostic bundle</button>
+        <button id="exportDiagnostics" class="secondary" type="button">Download diagnostics (.json)</button>
+      </div>
+    </div>
+    <div class="panel">
       <h3>Backup & portability</h3>
       <p>Your master collection is stored in your authenticated DeckVault account. Export backups whenever you want.</p>
       <div class="stack">
@@ -531,7 +544,7 @@
 
 <div id="toast" class="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js"></script>
-<script src="app.js?v=20" defer></script>
-<script src="social.js?v=20" defer></script>
+<script src="app.js?v=21" defer></script>
+<script src="social.js?v=21" defer></script>
 </body>
 </html>
