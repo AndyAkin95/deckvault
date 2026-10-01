@@ -1316,15 +1316,33 @@ async function ensureActiveScanWorker(){
   return activeScanWorker;
 }
 function normalizeScanText(text){
-  return String(text||'').replace(/[|]/g,'I').replace(/\s+/g,' ').trim();
+  return String(text||'').replace(/[｜∕⁄]/g,'/').replace(/\s+/g,' ').trim();
 }
-function parseCardFraction(text){
-  const t=normalizeScanText(text).replace(/\\/g,'/');
-  const matches=[...t.matchAll(/([A-Z]{0,4}\s*\d{1,4}|\d{1,4})\s*\/\s*(\d{2,4})/gi)];
-  if(!matches.length)return null;
-  const m=matches[matches.length-1];
-  return {localId:m[1].replace(/\s+/g,''),denominator:Number(m[2]),raw:m[0]};
+function normalizeCollectorId(value){
+  const raw=String(value||'').toUpperCase().replace(/[\s.-]/g,'');
+  const m=raw.match(/^([A-Z]*)(\d+)$/);
+  return m?m[1]+String(Number(m[2])):raw;
 }
+function parseCardFractions(text){
+  const clean=normalizeScanText(text);
+  const fractions=[];
+  // Number/total is more dependable than artwork alone. Allow OCR's O/I/L
+  // lookalikes in the numeric portion, without changing lettered promo prefixes.
+  for(const m of clean.matchAll(/(?:^|[^A-Z0-9])([A-Z]{0,4}\s*[0-9OIl]{1,4})\s*[/\\|]\s*([0-9OIl]{2,4})(?![0-9])/gi)){
+    const lhs=m[1].replace(/\s+/g,'').toUpperCase();
+    const split=lhs.match(/^([A-Z]{0,4})([0-9OIL]{1,4})$/);
+    if(!split)continue;
+    const asNumber=v=>v.replace(/[OQ]/g,'0').replace(/[IL]/g,'1');
+    const left=split[1]+asNumber(split[2]);
+    const denominator=Number(asNumber(m[2].toUpperCase()));
+    const local=normalizeCollectorId(left);
+    const localNumber=Number(asNumber(split[2]));
+    if(!denominator||denominator<10||denominator>999||!localNumber||localNumber>9999)continue;
+    fractions.push({localId:local,denominator,raw:m[0].trim()});
+  }
+  return [...new Map(fractions.map(f=>[f.localId+'/'+f.denominator,f])).values()].reverse();
+}
+function parseCardFraction(text){return parseCardFractions(text)[0]||null;}
 function levenshtein(a,b){
   a=String(a||'').toLowerCase();b=String(b||'').toLowerCase();
   const dp=Array.from({length:b.length+1},(_,i)=>i);
@@ -1345,68 +1363,188 @@ async function ocrRegion(yFrac,heightFrac,whitelist){
   const result=await worker.recognize(c);
   return normalizeScanText(result?.data?.text||'');
 }
-async function resolveActiveScanCandidate(fraction){
-  const sets=await pokemonSets();
-  let likely=(sets||[]).filter(s=>Number(s.cardCount?.official)===fraction.denominator);
-  if(!likely.length)likely=(sets||[]).filter(s=>Number(s.cardCount?.total)===fraction.denominator);
-  if(!likely.length)return null;
-  const results=[];
-  for(const set of likely.slice(0,18)){
-    try{const card=await pokemonSetCard(set.id,fraction.localId);if(card)results.push(card);}catch{}
+function scanEligibleSets(fraction,sets){
+  if(!fraction?.denominator)return sets||[];
+  return (sets||[]).filter(s=>[s.cardCount?.official,s.cardCount?.total]
+    .some(n=>Number(n)===fraction.denominator));
+}
+function scanCandidateRank(c,hint=''){
+  const q=String(hint||'').trim().toLowerCase();
+  if(!q)return 0;
+  const name=String(c.name||'').toLowerCase(),set=String(c.set?.name||'').toLowerCase();
+  if(name===q||set===q)return -100;
+  if(name.includes(q)||set.includes(q))return -75;
+  const words=q.split(/\s+/).filter(x=>x.length>2);
+  return words.length?-Math.max(...words.map(w=>
+    name.includes(w)||set.includes(w)?45:Math.max(0,20-levenshtein(w,name))
+  )):0;
+}
+async function lookupScanCandidates(fraction,nameHint=''){
+  const localId=fraction?.localId||null;
+  const [setsResult,cardsResult]=await Promise.allSettled([
+    pokemonSets(),pokemonSearch(localId?'':nameHint,localId||'')
+  ]);
+  const sets=setsResult.status==='fulfilled'&&Array.isArray(setsResult.value)?setsResult.value:[];
+  const eligible=scanEligibleSets(fraction,sets);
+  const eligibleMap=new Map(eligible.map(s=>[s.id,s]));
+  const allSets=new Map(sets.map(s=>[s.id,s]));
+  const briefs=cardsResult.status==='fulfilled'&&Array.isArray(cardsResult.value)?cardsResult.value:[];
+  const exact=briefs.filter(c=>!localId||normalizeCollectorId(c.localId)===normalizeCollectorId(localId));
+  const enriched=exact.map(c=>{
+    const setId=allSets.has(c.id.slice(0,c.id.lastIndexOf('-')))
+      ?c.id.slice(0,c.id.lastIndexOf('-')):(c.id.slice(0,c.id.lastIndexOf('-')));
+    const set=allSets.get(setId)||{id:setId,name:setId};
+    return {...c,set,verifiedSetTotal:!fraction?.denominator||eligibleMap.has(setId)};
+  });
+  // Include all valid official/total matches, not only the first 18 sets.
+  let candidates=fraction?.denominator
+    ?enriched.filter(c=>c.verifiedSetTotal)
+    :enriched;
+  // When the number read is good but the denominator was misread, display
+  // unverified cards as alternatives; never silently auto-confirm them.
+  if(!candidates.length&&enriched.length)candidates=enriched.map(c=>({...c,verifiedSetTotal:false}));
+  if(!candidates.length&&localId&&eligible.length){
+    // Fall back to per-set lookups only if the indexed card search failed.
+    const direct=[];
+    for(let i=0;i<eligible.length&&direct.length<12;i+=5){
+      const batch=await Promise.allSettled(eligible.slice(i,i+5)
+        .map(set=>pokemonSetCard(set.id,localId)));
+      batch.forEach((r,j)=>{
+        if(r.status==='fulfilled'&&r.value)
+          direct.push({...r.value,set:r.value.set||eligible[i+j],verifiedSetTotal:true});
+      });
+    }
+    candidates=direct;
   }
-  if(!results.length)return null;
-  if(results.length===1)return results[0];
-  let nameText='';
-  try{
-    nameText=await ocrRegion(.02,.20,'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz -');
-  }catch{}
-  const words=nameText.split(/\s+/).filter(w=>w.length>2);
-  if(words.length){
-    results.sort((a,b)=>{
-      const score=c=>Math.min(...words.map(w=>levenshtein(w,c.name)),levenshtein(nameText,c.name));
-      return score(a)-score(b);
-    });
+  if(!candidates.length&&cardsResult.status==='rejected'&&setsResult.status==='rejected')
+    throw new Error('Card database is unreachable. Check your connection and try again.');
+  const deduped=[...new Map(candidates.map(c=>[c.id,c])).values()];
+  return deduped.sort((a,b)=>
+    Number(b.verifiedSetTotal)-Number(a.verifiedSetTotal) ||
+    scanCandidateRank(a,nameHint)-scanCandidateRank(b,nameHint) ||
+    String(a.name||'').localeCompare(String(b.name||'')) ||
+    String(a.set?.name||'').localeCompare(String(b.set?.name||'')));
+}
+function hideScanChoices(){
+  $('#scanChoices')?.classList.add('hidden');
+  if($('#scanChoicesGrid'))$('#scanChoicesGrid').innerHTML='';
+}
+function showScanChoices(cards,fraction){
+  activeScanRunning=false;
+  clearTimeout(activeScanTimer);
+  $('#scanChoices').classList.remove('hidden');
+  $('#activeScanCandidate').classList.add('hidden');
+  $('#activeScanGuide').classList.add('hidden');
+  $('#activeScanBtn').textContent='Resume Active Scan';
+  $('#activeScanStatus').textContent=cards.length+' possible matches. Select the right card image.';
+  const grid=$('#scanChoicesGrid');grid.innerHTML='';
+  cards.slice(0,24).forEach(card=>{
+    const button=document.createElement('button');button.type='button';button.className='scanchoice';
+    const img=card.image?'<img loading="lazy" src="'+esc(imageUrl(card.image,'low'))+'" alt="'+esc(card.name)+'">':'<div class="librarycardplaceholder">DV</div>';
+    button.innerHTML=img+'<strong>'+esc(card.name)+'</strong><span>'+esc(card.set?.name||'Unknown set')+
+      ' • #'+esc(card.localId||'')+'</span>'+
+      (!card.verifiedSetTotal?'<small class="muted">Set total unverified</small>':'');
+    button.onclick=()=>{hideScanChoices();showActiveScanCandidate(card,fraction);};
+    grid.appendChild(button);
+  });
+  if(cards.length>24){
+    const p=document.createElement('p');p.className='muted';
+    p.textContent='Showing 24 of '+cards.length+'. Enter the card name or set below to narrow the list.';
+    grid.appendChild(p);
   }
-  return results[0];
 }
 function showActiveScanCandidate(card,fraction){
   if(!card)return;
   activeScanMatch=card;activeScanRunning=false;
   clearTimeout(activeScanTimer);
+  hideScanChoices();
   $('#activeScanCandidateImage').src=imageUrl(card.image,'high');
   $('#activeScanCandidateName').textContent=card.name;
-  $('#activeScanCandidateMeta').textContent=(card.set?.name||'Pokémon TCG')+' • #'+card.localId+(fraction?.raw?' • read '+fraction.raw:'');
+  $('#activeScanCandidateMeta').textContent=(card.set?.name||'Pokémon TCG')+
+    ' • #'+card.localId+
+    (fraction?.raw?' • read '+fraction.raw:'')+
+    (card.verifiedSetTotal===false?' • verify printed total':'');
   $('#activeScanCandidate').classList.remove('hidden');
   $('#activeScanGuide').classList.add('hidden');
-  $('#activeScanStatus').textContent='Does this match the card in front of the camera?';
+  $('#activeScanStatus').textContent='Does this match your card?';
   $('#activeScanBtn').textContent='Resume Active Scan';
+}
+async function showScannedMatches(fraction,nameHint=''){
+  const candidates=await lookupScanCandidates(fraction,nameHint);
+  const available=candidates.filter(c=>!activeScanRejected||
+    c.id!==activeScanRejected.id||Date.now()>activeScanRejected.until);
+  if(!available.length)return false;
+  if(available.length===1&&available[0].verifiedSetTotal!==false)
+    showActiveScanCandidate(available[0],fraction);
+  else showScanChoices(available,fraction);
+  return true;
+}
+async function manualScanSearch(){
+  stopActiveScan(false);
+  const raw=$('#scanManualNumber').value.trim(),hint=$('#scanManualName').value.trim();
+  if(!raw&&!hint){$('#activeScanStatus').textContent='Enter a printed number or card name.';return;}
+  let fraction=parseCardFraction(raw);
+  if(!fraction&&raw){
+    const id=normalizeCollectorId(raw.replace(/[^A-Za-z0-9]/g,''));
+    fraction={localId:id,denominator:null,raw};
+  }
+  $('#activeScanStatus').textContent='Searching for possible matches…';
+  try{
+    const found=await showScannedMatches(fraction,hint);
+    if(!found)$('#activeScanStatus').textContent='No matches yet. Check the printed number, or try the Lookup tab.';
+  }catch(e){
+    console.error('Manual scan search',e);
+    $('#activeScanStatus').textContent='Card search failed: '+e.message;
+  }
 }
 async function activeScanStep(){
   if(!activeScanRunning||activeScanBusy||!stream)return;
   activeScanBusy=true;
   try{
-    $('#activeScanStatus').textContent='Reading the bottom card number…';
-    const text=await ocrRegion(.68,.30,'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/- ');
-    const fraction=parseCardFraction(text);
-    if(!fraction){
-      $('#activeScanStatus').textContent='Looking for a number like 161/197…';
+    $('#activeScanStatus').textContent='Reading the printed card number…';
+    const primary=await ocrRegion(.70,.28,'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/- ');
+    let fractions=parseCardFractions(primary),readout=primary;
+    if(!fractions.length){
+      const wider=await ocrRegion(.55,.42,'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/- ');
+      fractions=parseCardFractions(wider);readout=wider||primary;
+    }
+    $('#scanReadout').textContent=readout?'Detected text: '+readout.slice(0,100):'No printed number detected yet.';
+    if(!fractions.length){
+      $('#activeScanStatus').textContent='No clear number yet. Hold the card steady, or enter its number below.';
     }else{
-      $('#activeScanStatus').textContent='Found '+fraction.raw+' — matching the set…';
-      const card=await resolveActiveScanCandidate(fraction);
-      if(card&&(!activeScanRejected||activeScanRejected.id!==card.id||Date.now()>activeScanRejected.until)){
-        showActiveScanCandidate(card,fraction);return;
+      let found=false;
+      for(const fraction of fractions){
+        $('#activeScanStatus').textContent='Found '+fraction.raw+' — checking matching cards…';
+        const candidates=await lookupScanCandidates(fraction);
+        const available=candidates.filter(c=>!activeScanRejected||
+          c.id!==activeScanRejected.id||Date.now()>activeScanRejected.until);
+        if(!available.length)continue;
+        let hint='';
+        if(available.length>1){
+          try{hint=await ocrRegion(.06,.38,'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz -');}catch{}
+        }
+        if(hint)available.sort((a,b)=>scanCandidateRank(a,hint)-scanCandidateRank(b,hint));
+        if(available.length===1&&available[0].verifiedSetTotal!==false)
+          showActiveScanCandidate(available[0],fraction);
+        else showScanChoices(available,fraction);
+        found=true;break;
       }
-      $('#activeScanStatus').textContent=card?'That match was just rejected — keep the next card steady.':'Number found, but no confident card match yet.';
+      if(found)return;
+      $('#activeScanStatus').textContent='Number detected, but no clear match. Check the readout or enter the number manually below.';
+      $('#scanManualDetails').open=true;
+      if(!$('#scanManualNumber').value)$('#scanManualNumber').value=fractions[0].raw;
     }
   }catch(e){
     console.warn('Active scan',e);
-    $('#activeScanStatus').textContent='Could not read this frame. Hold the card steady and reduce glare.';
+    $('#activeScanStatus').textContent='Scanning had trouble: '+(e?.message||'try holding the card steady');
+    $('#scanManualDetails').open=true;
   }finally{
     activeScanBusy=false;
-    if(activeScanRunning)activeScanTimer=setTimeout(activeScanStep,700);
+    if(activeScanRunning)activeScanTimer=setTimeout(activeScanStep,850);
   }
 }
 async function startActiveScan(){
+  hideScanChoices();
   if(activeScanMatch){activeScanMatch=null;$('#activeScanCandidate').classList.add('hidden');}
   if(!stream){const ok=await startCamera();if(!ok)return;}
   activeScanRunning=true;
@@ -1530,7 +1668,7 @@ async function init(){
   $('#acceptTermsCheck').onchange=e=>{$('#acceptTermsBtn').disabled=!e.target.checked;};
   $('#acceptTermsBtn').onclick=acceptCurrentTerms;
   $('#searchBtn').onclick=search;$('#searchName').onkeydown=e=>{if(e.key==='Enter')search();};$('#searchNumber').onkeydown=e=>{if(e.key==='Enter')search();};
-  $('#librarySearch').oninput=renderLibrary;$('#librarySort').onchange=renderLibrary;$('#refreshPrices').onclick=refreshPrices;$('#manualAddCardBtn').onclick=openManualCard;$('#saveManualCardBtn').onclick=saveManualCard;$('#newFolderBtn').onclick=createFolder;$('#manageFoldersBtn').onclick=()=>{renderFolderManager();$('#manageFoldersDialog').showModal();};$('#saveFolderAssignmentsBtn').onclick=saveFolderAssignments;$('#startCamera').onclick=startCamera;$('#activeScanBtn').onclick=toggleActiveScan;$('#activeScanReject').onclick=rejectActiveScanMatch;$('#activeScanConfirm').onclick=confirmActiveScanMatch;$('#captureCard').onclick=capture;$('#retake').onclick=retake;
+  $('#librarySearch').oninput=renderLibrary;$('#librarySort').onchange=renderLibrary;$('#refreshPrices').onclick=refreshPrices;$('#manualAddCardBtn').onclick=openManualCard;$('#saveManualCardBtn').onclick=saveManualCard;$('#newFolderBtn').onclick=createFolder;$('#manageFoldersBtn').onclick=()=>{renderFolderManager();$('#manageFoldersDialog').showModal();};$('#saveFolderAssignmentsBtn').onclick=saveFolderAssignments;$('#scanManualSearch').onclick=manualScanSearch;$('#scanManualNumber').onkeydown=e=>{if(e.key==='Enter')manualScanSearch();};$('#scanManualName').onkeydown=e=>{if(e.key==='Enter')manualScanSearch();};$('#startCamera').onclick=startCamera;$('#activeScanBtn').onclick=toggleActiveScan;$('#activeScanReject').onclick=rejectActiveScanMatch;$('#activeScanConfirm').onclick=confirmActiveScanMatch;$('#captureCard').onclick=capture;$('#retake').onclick=retake;
   $('#exportJson').onclick=exportJson;$('#exportCsv').onclick=()=>exportCsv(false);$('#exportCollectr').onclick=()=>exportCsv(true);$('#importJson').onchange=async e=>{if(e.target.files[0])try{await importBackup(e.target.files[0]);}catch(err){alert(err.message);}e.target.value='';};
   $('#clearData').onclick=async()=>{if(confirm('Delete every card in your DeckVault account collection?')){const {error}=await sb.from('collection_items').delete().eq('user_id',currentUser.id);if(error)return toast('Could not clear collection');await loadCollection();renderDashboard();renderLibrary();toast('Collection cleared');}};
   $('#priceSource').value=pricePref();$('#priceSource').onchange=e=>{localStorage.setItem('deckvault-price-source',e.target.value);toast('Price source saved');};
